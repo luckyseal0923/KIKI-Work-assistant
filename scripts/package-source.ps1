@@ -2,12 +2,12 @@ param()
 $ErrorActionPreference = 'Stop'
 $projectRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $outputDirectory = Join-Path $projectRoot 'outputs'
-$archivePath = Join-Path $outputDirectory 'kiki-work-assistant-0.1.0-github-source.zip'
+$archivePath = Join-Path $outputDirectory 'kiki-work-assistant-0.1.0-compose-source.zip'
 
 # Explicit allowlist: never package .env, .git, node_modules, secrets, or logs.
 $included = @(
     'package.json', 'package-lock.json', '.gitignore', '.dockerignore', '.env.example',
-    'Dockerfile', 'README.md', 'src', 'scripts', 'migrations', 'test', 'docs'
+    'Dockerfile', 'compose.yaml', 'README.md', 'src', 'scripts', 'migrations', 'test', 'docs'
 )
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 New-Item -ItemType Directory -Path $outputDirectory -Force | Out-Null

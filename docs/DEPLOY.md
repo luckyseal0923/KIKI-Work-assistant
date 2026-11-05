@@ -89,6 +89,8 @@ bot 已加入你的測試群，**不必移除再邀請**。請在該群親自傳
 
 ## 4. 套用專用區增量 SQL 與安全登入
 
+若要從 KIKI 連入另一個 Supabase stack 的私有網路，先依 [私有資料庫網路部署說明](PRIVATE_DATABASE.md) 檢查並套用 KIKI 專用的 `compose.yaml`，保留既有對外代理網路及網域。單純的 discover 收訊仍可使用原 Dockerfile 部署；兩種方式都不能以健康檢查成功代替資料庫認證與權限驗收。
+
 既有 `linebot_app`、`linebot`、`linebot.messages` 不要重新建立。
 
 ### 4-1 增量結構

@@ -1,0 +1,34 @@
+# KIKI only: reuse existing networks; never create or alter the shared database.
+services:
+  kiki:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      APP_MODE: ${APP_MODE:?Set APP_MODE}
+      LINE_CHANNEL_SECRET: ${LINE_CHANNEL_SECRET:?Set LINE_CHANNEL_SECRET securely}
+      PORT: ${PORT:-3000}
+      ALLOWED_GROUP_ID: ${ALLOWED_GROUP_ID:-}
+      DB_HOST: ${DB_HOST:-}
+      DB_PORT: ${DB_PORT:-5432}
+      DB_NAME: ${DB_NAME:-postgres}
+      DB_USER: ${DB_USER:-linebot_app}
+      DB_PASSWORD: ${DB_PASSWORD:-}
+      DB_TLS: ${DB_TLS:-verify-full}
+      DB_CA_FILE: ${DB_CA_FILE:-}
+      DB_PRIVATE_NETWORK_CONFIRMED: ${DB_PRIVATE_NETWORK_CONFIRMED:-false}
+    expose:
+      - "${PORT:-3000}"
+    networks:
+      - coolify_proxy
+      - supabase_private
+    # The image's Node-based HEALTHCHECK remains in force.
+
+networks:
+  coolify_proxy:
+    external: true
+    name: coolify
+  supabase_private:
+    external: true
+    name: ${SUPABASE_DOCKER_NETWORK:?Set the existing Supabase stack network name}

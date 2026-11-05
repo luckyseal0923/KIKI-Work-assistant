@@ -57,6 +57,8 @@ skipped 0
 
 ## GitHub 交付範圍
 
+2026-11-06 新增 KIKI 專用的 `compose.yaml`，供同時使用既有代理網路與已確認的 Supabase 私有網路。已完成 YAML 語法、單一服務、外部網路、無主機 port／敏感掛載、原應用環境介面與原 Dockerfile 未變等靜態核對；沒有因部署設定變更而重跑原功能測試。實際網路與權限的逐次驗證結果另存本機忽略版本控制的 `outputs/`，不將正式網路名稱、群組 ID 或秘密提交到儲存庫。
+
 使用者指定目標為 [luckyseal0923/KIKI-Work-assistant](https://github.com/luckyseal0923/KIKI-Work-assistant)，交付分支為 `codex/kiki-phase1`。2026-11-05 推送前檢查：遠端儲存庫存在、現有帳號具備 push 權限，尚無任何分支提交，API 預設分支欄位為 `main`。這是推送前觀察；第一個分支推送後，以實際 GitHub 分支狀態為準，不另外修改預設分支或可見性。
 
 此次只更新實際儲存庫／分支指引與封裝檔名，並檢查待提交清單、秘密排除、package／lockfile 一致性、新 ZIP 與檢查碼；沒有重跑整套功能測試。提交只包含 25 個原始碼、必要設定範例、lockfile、測試與文件檔案，不含 `outputs/`、`.env`、`node_modules/`、金鑰或日誌。只有 push 成功且遠端分支 commit 與檔案核對一致後，才算完成程式碼上傳；這不代表 Coolify 已部署或真實群組訊息已入庫。

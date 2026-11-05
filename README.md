@@ -6,7 +6,7 @@ Your Intelligent Work Assistant
 
 將一個明確允許的測試群文字，經 LINE 原始本文簽章驗證後，寫入你已建立的共用自架 Supabase `linebot` 區域。部署目標為 Coolify，使用受限的 PostgreSQL 帳號直接連線。
 
-**目前交付的是可部署原始碼。本機測試通過不代表已部署或已接通你的 Supabase。**
+**2026-11-06 已完成 discover 模式的雲端部署與群組事件識別；資料庫連線、權限驗收與正式保存仍需完成後續步驟。** 本機測試通過或健康檢查成功，都不等於文字已保存。
 
 正式對外名稱為「綺綺 KIKI｜智慧秘書」，英文副標為「Your Intelligent Work Assistant」；套件、容器映像與其他需要 ASCII 的技術名稱統一使用 `kiki-work-assistant`。使用者指定的 GitHub 儲存庫為 [luckyseal0923/KIKI-Work-assistant](https://github.com/luckyseal0923/KIKI-Work-assistant)，儲存庫名稱維持原樣；本次交付分支為 [`codex/kiki-phase1`](https://github.com/luckyseal0923/KIKI-Work-assistant/tree/codex/kiki-phase1)。GitHub 是否已連接 Coolify 仍需確認，程式碼上傳不代表雲端部署完成。
 
@@ -62,6 +62,7 @@ npm run start:local
 | --- | --- |
 | `src/` | HTTP 收訊、驗簽、資料庫儲存、設定與啟動檢查 |
 | `Dockerfile`、`.dockerignore` | Coolify 容器，使用非管理員帳號，秘密不進映像檔 |
+| `compose.yaml` | 只讓 KIKI 同時使用既有對外代理網路與既有 Supabase 私有網路 |
 | `.env.example` | 只有欄位，沒有正式秘密 |
 | `migrations/001_event_safety.sql` | 增加編輯欄位、去重表與撤回狀態表 |
 | `migrations/002_role_login.sql` | 只為既有專用角色開啟登入並限制連線與逾時 |
@@ -69,9 +70,9 @@ npm run start:local
 | `test/` | 關鍵行為的自動測試 |
 | `docs/DEPLOY.md` | Coolify、LINE、SQL 與實際驗收步驟 |
 
-本次 GitHub 交付的完整原始碼：[kiki-work-assistant-0.1.0-github-source.zip](outputs/kiki-work-assistant-0.1.0-github-source.zip)；[SHA-256 檢查碼](outputs/kiki-work-assistant-0.1.0-github-source.zip.sha256)。可使用 `scripts/package-source.ps1` 重新建立 ZIP 與檢查碼。壓縮檔僅收錄明確允許的原始碼、測試與文件，不包含秘密設定或 `node_modules`。封裝檔與 `outputs/` 不提交到 GitHub；從 GitHub 取得程式碼後，可在本機執行打包腳本產生上述檔案。
+本次私有網路部署準備的完整原始碼：[kiki-work-assistant-0.1.0-compose-source.zip](outputs/kiki-work-assistant-0.1.0-compose-source.zip)；[SHA-256 檢查碼](outputs/kiki-work-assistant-0.1.0-compose-source.zip.sha256)。可使用 `scripts/package-source.ps1` 重新建立 ZIP 與檢查碼。壓縮檔僅收錄明確允許的原始碼、測試與文件，不包含秘密設定或 `node_modules`。封裝檔與 `outputs/` 不提交到 GitHub；從 GitHub 取得程式碼後，可在本機執行打包腳本產生上述檔案。
 
-先前交付的 `outputs/line-group-receiver-0.1.0-source.zip`、`outputs/kiki-work-assistant-0.1.0-source.zip` 及各自檢查碼仍保留，沒有覆寫。版本維持 `0.1.0`；命名與封裝修改前後段落見 [命名調整紀錄](docs/BRANDING_CHANGE.md)。ZIP 解壓後不會包含 `outputs/`，請從原專案的交付位置取得封裝檔。
+先前交付的 `outputs/line-group-receiver-0.1.0-source.zip`、`outputs/kiki-work-assistant-0.1.0-source.zip`、`outputs/kiki-work-assistant-0.1.0-github-source.zip` 及各自檢查碼仍保留，沒有覆寫。版本維持 `0.1.0`；命名與封裝修改前後段落見 [命名調整紀錄](docs/BRANDING_CHANGE.md) 與 [私有資料庫網路部署說明](docs/PRIVATE_DATABASE.md)。ZIP 解壓後不會包含 `outputs/`，請從原專案的交付位置取得封裝檔。
 
 ## 資料與限制
 
