@@ -20,7 +20,9 @@ Compose 只有 `kiki` 一個服務，仍由原 Dockerfile 建置，沿用原 Nod
 6. 部署後重新核對 HTTPS `/healthz`、`/readyz`，以及未簽章的 `/webhook` 仍回 `401`。
 7. 從 KIKI 容器使用目標已確認的穩定 `container_name` 或網路別名測試 DNS 與 TCP port。僅有 DNS 成功或 TCP 成功不等於受限帳號已通過資料庫認證與權限檢查。
 
-所有原應用 Runtime 變數仍由 `${變數}` 引用，不在 Compose 填入正式秘密。Compose 載入時會保留已存在的設定。新增的 `SUPABASE_DOCKER_NETWORK` 只供部署解析，不是應用程式的新資料介面，也不會被傳入 Node 程序。
+所有原應用 Runtime 變數仍由 `${變數}` 引用，不在 Compose 填入正式秘密。Compose 載入時會保留已存在的設定。新增的 `SUPABASE_DOCKER_NETWORK` 只供部署解析，不是應用程式的新資料介面；即使 Coolify 的 `env_file` 把它一併放入 Runtime，Node 收訊程式也不讀取這個欄位。
+
+2026-11-06 的準備狀態：Compose 語法與產生的雙網路設定已核對，但尚未部署或實測私有 DNS／TCP。原 KIKI 應用維持 Dockerfile 與 discover，待資料庫有效權限界線完成審核後，才繼續接通資料庫；不能以部署預覽代替連線驗收。
 
 若伺服器 TLS 未啟用，只能在已確認的同主機私有網路路徑上，依既有 `DB_TLS=private` 與 `DB_PRIVATE_NETWORK_CONFIRMED=true` 流程設定；不能用略過憑證驗證或公開 `5432` 的方式處理。
 
