@@ -1,0 +1,24 @@
+{
+  "name": "kiki-work-assistant",
+  "displayName": "綺綺 KIKI｜智慧秘書",
+  "description": "Your Intelligent Work Assistant",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20.12.0"
+  },
+  "scripts": {
+    "start": "node src/main.js",
+    "start:local": "node --env-file=.env src/main.js",
+    "test": "node --test --test-concurrency=1",
+    "db:check": "node scripts/check-database.js",
+    "db:check:local": "node --env-file=.env scripts/check-database.js"
+  },
+  "dependencies": {
+    "pg": "8.23.1"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "0.5.15"
+  }
+}
