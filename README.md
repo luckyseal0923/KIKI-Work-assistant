@@ -4,7 +4,7 @@ Your Intelligent Work Assistant
 
 第一階段：LINE 單群文字收訊端。第二階段：管理者標記 KIKI 後的今日摘要與待辦（預設關閉）。
 
-第三階段新增「自由提問、群組內容整理、文字草擬」，保留四個快捷指令。使用既有金鑰、管理者與原測試群；需完成遷移 004、稽核並開啟 `ASSISTANT_FREEFORM_ENABLED`。一般提問與附文改寫不讀群組歷史，明確要求群組整理才讀取本群今日的限量訊息。設定、範例與限制見 [自然語言交辦說明](docs/FREEFORM_ASSISTANT.md)。
+第三階段新增「自由提問、群組內容整理、文字草擬、歷史文字與行程查找」，保留四個快捷指令。使用既有金鑰、管理者與原測試群；需完成遷移 004、稽核並開啟 `ASSISTANT_FREEFORM_ENABLED`。一般提問與附文改寫不讀群組歷史；群組要求才查找本群已保存的限量文字，可指定今天、歷史主題或訊息日期。加入前未保存的 LINE 歷史無法補讀，文字行程查找未連接外部行事曆。設定與限制見 [自然語言交辦說明](docs/FREEFORM_ASSISTANT.md)，實際結果見 [第三階段驗收](docs/PHASE3_ACCEPTANCE.md)。
 
 將一個明確允許的測試群文字，經 LINE 原始本文簽章驗證後，寫入你已建立的共用自架 Supabase `linebot` 區域。部署目標為 Coolify，使用受限的 PostgreSQL 帳號直接連線。
 

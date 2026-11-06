@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { taipeiDay } from './assistant-command.js';
+import { eventDatePattern } from './assistant-scope.js';
 
 export async function enqueueAssistantJob(client, event) {
   const job = event.assistantJob;
@@ -82,19 +83,21 @@ export class AssistantStore {
     const { rows } = await this.pool.query(`SELECT m.message_id,left(m.message_text,2000) AS text,
         char_length(m.message_text)>2000 AS text_truncated,
         encode(sha256(convert_to(m.message_text,'UTF8')),'hex') AS digest,
-        coalesce(m.sent_at,m.received_at) AS effective_at,count(*) OVER()::integer AS total_count
+        coalesce(m.sent_at,m.received_at) AS effective_at${job.history ? '' : ',count(*) OVER()::integer AS total_count'}
       FROM linebot.messages m JOIN linebot.message_state s
         ON s.message_id=m.message_id AND s.group_id=m.group_id
       WHERE m.group_id=$1 AND coalesce(m.sent_at,m.received_at) >= $2
         AND coalesce(m.sent_at,m.received_at) < $3 AND s.unsent_at IS NULL
         AND ($4::text IS NULL OR strpos(lower(m.message_text),lower($4))>0)
+        AND ($6::text IS NULL OR m.message_text ~ $6)
         AND NOT EXISTS (SELECT 1 FROM linebot.assistant_jobs j
           WHERE j.source_message_id=m.message_id AND j.group_id=m.group_id)
       ORDER BY coalesce(m.sent_at,m.received_at) DESC,m.message_id DESC LIMIT $5`,
-    [job.group_id, job.range_start, job.range_end, job.keyword, this.config.assistant.maxMessages]);
+    [job.group_id, job.range_start, job.range_end, job.keyword,
+      this.config.assistant.maxMessages + (job.history ? 1 : 0), eventDatePattern(job.eventDate)]);
     const selected = [];
     let remaining = 22000;
-    for (const row of rows) {
+    for (const row of rows.slice(0, this.config.assistant.maxMessages)) {
       if (remaining < 100) break;
       let text = row.text.slice(0, remaining);
       if (/[\uD800-\uDBFF]$/u.test(text)) text = text.slice(0, -1);
@@ -105,8 +108,11 @@ export class AssistantStore {
     return {
       messages: selected.map((row, i) => ({ ref: `M${i + 1}`, at: new Date(row.effective_at).toISOString(), text: row.text })),
       versions: selected.map(sourceVersion), ids: selected.map(row => row.message_id),
-      total: rows[0]?.total_count || 0,
-      truncated: selected.length < (rows[0]?.total_count || 0) || selected.some(row => row.text_truncated),
+      total: job.history ? rows.length : rows[0]?.total_count || 0,
+      totalIsLowerBound: Boolean(job.history && rows.length > this.config.assistant.maxMessages),
+      history: Boolean(job.history),
+      scopeLabel: job.scopeLabel,
+      truncated: selected.length < (job.history ? rows.length : rows[0]?.total_count || 0) || selected.some(row => row.text_truncated),
       readAt: new Date().toISOString(),
     };
   }

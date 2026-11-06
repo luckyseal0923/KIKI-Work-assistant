@@ -1,6 +1,7 @@
 import { decryptReplyToken, helpText, taipeiDay } from './assistant-command.js';
 import { AssistantError } from './assistant-clients.js';
 import { UNSUPPORTED_TASK } from './assistant-dialogue.js';
+import { resolveRequestPlan } from './assistant-scope.js';
 
 const time = value => new Intl.DateTimeFormat('zh-TW', { timeZone: 'Asia/Taipei', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(value));
 
@@ -31,11 +32,13 @@ export function renderSummary(job, snapshot, summary) {
 export function renderDialogue(job, plan, snapshot, answer) {
   const lines = [`綺綺 KIKI｜${answer.title}`];
   if (snapshot) {
-    lines.push(`${taipeiDay(job.range_start).day}｜截至 ${time(snapshot.readAt)}｜以已保存訊息為限`,
-      `符合範圍 ${snapshot.total} 則，本次使用 ${snapshot.messages.length} 則${plan.keyword ? `｜主題：${plan.keyword}` : ''}`);
-    if (snapshot.truncated) lines.push('注意：僅涵蓋最近部分訊息，部分長文已節錄，並非完整全日內容。');
+    lines.push(`${snapshot.scopeLabel || taipeiDay(job.range_start).day}｜截至 ${time(snapshot.readAt)}｜以已保存訊息為限`,
+      `符合範圍${snapshot.totalIsLowerBound ? '至少' : ''} ${snapshot.total} 則，本次使用 ${snapshot.messages.length} 則${plan.keyword ? `｜主題：${plan.keyword}` : ''}`);
+    if (plan.eventDate) lines.push(`查找行程日期：${plan.eventDate.year ? plan.eventDate.year+'/' : ''}${plan.eventDate.month}/${plan.eventDate.day}（依群組文字）`);
+    if (snapshot.truncated) lines.push('注意：僅涵蓋最近部分訊息，部分長文已節錄，並非完整全日內容或全部歷史。');
   }
-  const refs = new Map((snapshot?.messages || []).map(m => [m.ref, `${m.ref} ${time(m.at)}`]));
+  const refs = new Map((snapshot?.messages || []).map(m => [m.ref,
+    `${m.ref} ${snapshot.history ? taipeiDay(m.at).day+' ' : ''}${time(m.at)}`]));
   for (const block of answer.blocks) {
     lines.push('', block.text + (block.refs.length ? `〔${block.refs.map(ref => refs.get(ref)).join('、')}〕` : ''));
   }
@@ -112,16 +115,19 @@ export class AssistantWorker {
               : metrics[key] === undefined ? value : metrics[key] === null ? null : metrics[key] + value;
           }
         };
-        const plan = await this.dialogue.plan(request, job.range_start,
+        const proposed = await this.dialogue.plan(request, job.range_start,
           { signal: this.abort.signal, timeout: Math.min(6000, aiRemaining()) });
-        addUsage(plan);
+        addUsage(proposed);
+        const plan = resolveRequestPlan(proposed, request, job);
         if (plan.mode === 'unsupported') text = UNSUPPORTED_TASK;
         else if (plan.mode === 'clarify') text = `綺綺 KIKI｜待確認\n${plan.clarification}`;
         else {
           if (!await this.store.unchanged(job, null)) throw new AssistantError('source_changed');
-          if (plan.mode === 'group_today') snapshot = await this.store.readMessages({ ...job, keyword: plan.keyword });
+          if (['group_today','group_history'].includes(plan.mode)) snapshot = await this.store.readMessages({ ...job,
+            keyword: plan.keyword, history: plan.history, eventDate: plan.eventDate, scopeLabel: plan.scopeLabel,
+            range_start: plan.sourceStart, range_end: plan.sourceEnd });
           metrics.messageCount = snapshot?.messages.length || 0; metrics.truncated = snapshot?.truncated || false;
-          if (snapshot && !snapshot.messages.length) text = '今天尚無符合範圍、可供整理的已保存訊息。';
+          if (snapshot && !snapshot.messages.length) text = `${plan.scopeLabel}中尚無符合範圍的文字；這不代表沒有其他行程或討論。`;
           else {
             if (!await this.store.unchanged(job, snapshot)) throw new AssistantError('source_changed');
             const answer = await this.dialogue.answer(request, plan, snapshot,

@@ -12,6 +12,7 @@ import { decryptReplyToken } from '../src/assistant-command.js';
 import { AssistantWorker } from '../src/assistant-worker.js';
 import { OpenAISummarizer, LineReplier } from '../src/assistant-clients.js';
 import { OpenAIDialogue } from '../src/assistant-dialogue.js';
+import { resolveRequestPlan } from '../src/assistant-scope.js';
 
 const owner = `U${'2'.repeat(32)}`, secret = 'synthetic-assistant-database-secret';
 let seq = 0;
@@ -225,6 +226,34 @@ test('assistant database integration: durable jobs, quota, retraction, source ch
     const limited=await q.claim(); assert.equal(limited.kind,'rate_limited');
     assert.equal(limited.notice_reason,'daily_limit'); assert.equal(limited.request_offset,null);
     await q.finish(limited,'sent');
+  });
+
+  await t.test('history retrieval finds older saved event dates, excludes other groups, commands and recalled sources', async () => {
+    const c=configFor('e'); c.assistant.freeformEnabled=true;
+    const q=new AssistantStore(pool,c);
+    const older=textEvent(c,'合成歷史：11/10 07:00 和測試角色聚餐。',{at:Date.now()-3*86400000});
+    const chinese=textEvent(c,'合成歷史：11月10日 15:00 教學測試。',{at:Date.now()-2*86400000});
+    await archive.save(selected(c,older,chinese,textEvent(c,'合成其他：11/06 23:00 測試。'),textEvent(c,'合成其他：11/100 不是真日期。')));
+    await archive.save(selected(config,textEvent(config,'合成其他群：11/10 07:00。')));
+    const raw=textEvent(c,'@KIKI 11/10 我有什麼行程',{command:true}); await archive.save(selected(c,raw));
+    const job=await q.claim(), p=resolveRequestPlan({mode:'unsupported',keyword:null,clarification:null},'11/10 我有什麼行程',job);
+    const query={...job,history:p.history,eventDate:p.eventDate,keyword:p.keyword,range_start:p.sourceStart,range_end:p.sourceEnd,scopeLabel:p.scopeLabel};
+    const result=await q.readMessages(query);
+    assert.equal(result.total,2); assert.equal(result.totalIsLowerBound,false); assert.equal(result.truncated,false);
+    assert.equal(result.messages[0].text,older.message.text); assert.equal(result.messages[1].text,chinese.message.text);
+    await archive.save(selected(c,{type:'unsend',timestamp:Date.now(),webhookEventId:`synthetic-history-unsend-${++seq}`,source:older.source,unsend:{messageId:older.message.id}}));
+    assert.equal(await q.unchanged(job,result),false); assert.equal((await q.readMessages(query)).total,1);
+    await q.finish(job,'sent');
+  });
+
+  await t.test('large historical searches return only the latest bounded subset and label the count as a lower bound', async () => {
+    const c=configFor('f'); c.assistant.freeformEnabled=true; const q=new AssistantStore(pool,c);
+    const records=Array.from({length:105},(_,i)=>textEvent(c,`合成歷史檢索 ${i}`,{at:Date.now()-86400000-i*1000}));
+    for(let offset=0;offset<records.length;offset+=35) await archive.save(selected(c,...records.slice(offset,offset+35)));
+    const raw=textEvent(c,'@KIKI 找出過去合成歷史檢索',{command:true}); await archive.save(selected(c,raw)); const job=await q.claim();
+    const result=await q.readMessages({...job,history:true,keyword:'合成歷史檢索',range_start:'1970-01-01T00:00:00Z',range_end:job.created_at});
+    assert.equal(result.messages.length,100); assert.equal(result.total,101); assert.equal(result.totalIsLowerBound,true); assert.equal(result.truncated,true);
+    assert.equal(result.messages.some(m=>m.text==='合成歷史檢索 104'),false); await q.finish(job,'sent');
   });
 
   await t.test('real durable freeform pipeline uses two bounded mocked API calls, no history, one LINE reply and no replay', async () => {

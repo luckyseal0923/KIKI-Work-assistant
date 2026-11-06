@@ -97,13 +97,13 @@ function fixture(plan = planFor(), overrides = {}) {
     request_offset: 5, range_start: new Date(clock).toISOString(), created_at: new Date(clock).toISOString(),
     expires_at: new Date(clock + 45000).toISOString(), encrypted_reply_token: encryptReplyToken('synthetic-reply-token',secret) };
   const store = { current: async () => true, unchanged: async () => true, readRequest: async () => '合成使用者要求',
-    readMessages: async j => { calls.reads++; calls.keyword = j.keyword; return snapshot; },
+    readMessages: async j => { calls.reads++; calls.keyword = j.keyword; calls.readQuery=j; return snapshot; },
     finish: async (...args) => calls.finished.push(args), ...overrides.store };
   const worker = new AssistantWorker({ config, store, summarizer: { summarize: async () => { throw new Error('wrong AI route'); } },
     dialogue: { plan: async (request, day, options) => { calls.plans++; calls.timeouts.push(options.timeout); clock += 5000; return plan; },
       answer: async (request, p, source, options) => { calls.answers++; calls.timeouts.push(options.timeout);
         if (overrides.answerFailure) throw new Error('synthetic-provider-failure');
-        return p.mode === 'group_today' ? { ...answer, blocks: [{ text: '合成群組整理', refs: ['M1'] }] } : answer; } },
+        return ['group_today','group_history'].includes(p.mode) ? { ...answer, blocks: [{ text: '合成群組整理', refs: ['M1'] }] } : answer; } },
     replier: { reply: async (token,text) => calls.replies.push({ token,text }) }, now: () => clock,
     log: (...args) => calls.logs.push(args), ...overrides.worker });
   return { worker,job,calls };
@@ -147,4 +147,15 @@ test('edited or recalled instructions and sources prevent publication; a failed 
   const failed=fixture(planFor(),{answerFailure:true}); await failed.worker.process(failed.job);
   assert.equal(failed.calls.plans,1); assert.equal(failed.calls.answers,1); assert.equal(failed.calls.replies.length,1);
   assert.equal(failed.calls.finished[0][1],'failed');
+});
+
+test('the worker corrects saved schedule classification and enforces explicit topic codes before querying',async()=>{
+  const date=fixture(planFor('unsupported'),{store:{readRequest:async()=> '11/10 我有什麼行程'}});
+  await date.worker.process(date.job);
+  assert.equal(date.calls.reads,1); assert.equal(date.calls.answers,1); assert.equal(date.calls.readQuery.history,true);
+  assert.equal(date.calls.readQuery.eventDate.month,11); assert.equal(date.calls.readQuery.eventDate.day,10);
+  assert.match(date.calls.replies[0].text,/M1/); assert.match(date.calls.replies[0].text,/11\/10/);
+  const topic=fixture(planFor('group_today'),{store:{readRequest:async()=> '把今天 KIKI-NL-20261106-02 的討論整理成會議紀錄'}});
+  await topic.worker.process(topic.job);
+  assert.equal(topic.calls.keyword,'KIKI-NL-20261106-02'); assert.equal(topic.calls.readQuery.history,false);
 });
