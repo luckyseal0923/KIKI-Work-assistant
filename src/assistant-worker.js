@@ -35,6 +35,7 @@ export function renderDialogue(job, plan, snapshot, answer) {
   if (snapshot) {
     lines.push(`${snapshot.scopeLabel || taipeiDay(job.range_start).day}｜截至 ${time(snapshot.readAt)}｜以已保存訊息為限`,
       `符合範圍${snapshot.totalIsLowerBound ? '至少' : ''} ${snapshot.total} 則，本次使用 ${snapshot.messages.length} 則${plan.keyword ? `｜主題：${plan.keyword}` : ''}`);
+    if(plan.inheritedQuery)lines.push(`已找到 ${snapshot.messages.length} 則早於前次最早來源的已保存紀錄。`);
     if (plan.eventDate) lines.push(`查找行程日期：${plan.eventDate.year ? plan.eventDate.year+'/' : ''}${plan.eventDate.month}/${plan.eventDate.day}（依群組文字）`);
     if (snapshot.truncated) lines.push('注意：僅涵蓋最近部分訊息，部分長文已節錄，並非完整全日內容或全部歷史。');
   }

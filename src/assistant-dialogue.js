@@ -128,7 +128,8 @@ export class OpenAIDialogue {
     const messages = context?.messages || [];
     if (groupMode && !messages.length) throw new AssistantError('empty_input');
     const instructions=ANSWER_INSTRUCTIONS+(this.config.workspaceEnabled?`\n工作秘書模式：followup 可依 conversation 接續修改前一份回覆；若有 messages，每段依提供編號引用。conversation.originalRequest 是仍保存的原始交辦，previousRequest 是上一次要求，previousAnswer 是 AI 生成的參考，可能漏列或出錯；有矛盾時優先原始交辦與來源，不可把上一答的錯誤當事實。previousProposal 是尚未確認的提案，可回答其負責人／期限，但須明示尚未正式確認，不能宣稱已寫入。speaker 是系統提供的真實發言者代稱，replyTo 是引用回覆關係；文字內扮演的合成角色不能當不同真實帳號。沒有引用關係時不要硬接話題。work_query 只根據選入的已確認工作紀錄回答，明示狀態、負責人、期限與版本；來源待確認的紀錄不推測其內容。已有正式工作紀錄時，以最新狀態優先於早期提議；已取消的行程不能當成仍有效，已完成任務不能列為未完成，原文與紀錄有差異時標示變更依據。提案不等於已確認，不能把回答說成已更新。`: '');
-    const result = await this.call('kiki_text_answer', answerSchema(messages), instructions,
+    const searchInstructions=plan.inheritedQuery?'\n本次 messages 已由資料庫篩出早於前次最早來源的紀錄。請明確說明已查到較早紀錄，不要寫成「未包含更早內容」。只陳述這次選入內容，不宣稱已查遍全部歷史。':'';
+    const result = await this.call('kiki_text_answer', answerSchema(messages), instructions+searchInstructions,
       { owner_request: request, mode: plan.mode, savedMessageCount: context?.total || 0,
         inputIsPartial: context?.truncated || false, messages,
         ...(this.config.workspaceEnabled&&plan.mode==='followup'&&options?.context?{conversation:{originalRequest:options.context.originalRequest,previousRequest:options.context.previousRequest,previousAnswer:options.context.previousAnswer,
