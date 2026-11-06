@@ -1,6 +1,6 @@
 # 第二階段：管理者標記 KIKI，取得今日摘要與待辦
 
-2026-11-06：程式已完成本機合成測試；本文件不是正式雲端啟用或真實 API 驗收證明。預設 `ASSISTANT_ENABLED=false`，原單群收訊繼續運作。
+2026-11-06：本機 44 項測試通過，正式環境已依使用者明確授權啟用；四個指令皆完成原測試群的實際合成資料驗收，見 [驗收紀錄](PHASE2_ACCEPTANCE.md)。以下仍保留重新部署時的安全順序：原始碼預設 `ASSISTANT_ENABLED=false`，設定齊全並通過稽核後才啟用。
 
 ## 使用方式
 
@@ -38,6 +38,8 @@ KIKI 的流程已由程式固定：驗證管理者 → 查本群當日文字 →
 
 1. 保持 `ASSISTANT_ENABLED=false` 部署新程式，確認 `/healthz`、`/readyz` 與受限帳號 `npm run db:check` 通過。此時不會呼叫 AI 或回覆 LINE。
 2. 執行 [003_assistant_jobs.sql](../migrations/003_assistant_jobs.sql)。只新增 `linebot.assistant_jobs`、三個索引、RLS 與此表對 `linebot_app` 的 SELECT/INSERT/UPDATE；撤去此新表對 PUBLIC、anon、authenticated、service_role 的授權。不改既有共享 `net` ACL、登入或其他系統資料。
+
+   遷移需由既有 `linebot` schema 擁有者執行；本環境為 `supabase_admin`。Coolify 的資料庫終端若用 `postgres` 連線，並沒有該 schema 的 CREATE 權限。不要為執行遷移替 `postgres` 或 `linebot_app` 加權；使用已授權的既有管理角色，且任何錯誤後先確認交易已回滾。
 3. 本人填妥上述三欄。預設 `OPENAI_MODEL=gpt-6-luna`、`ASSISTANT_MAX_MESSAGES=100`、`ASSISTANT_DAILY_LIMIT=20`、`ASSISTANT_COOLDOWN_SECONDS=30`。
 4. 於取得新 runtime 設定的容器執行以下檢查；只輸出是否齊全、模型、上限或缺少的欄位名稱，不顯示秘密：
 
@@ -70,4 +72,4 @@ Production `ASSISTANT_ENABLED=false` 並重新部署，再核對健康及收訊�
 
 2026-11-06 `npm test`：44 項通過、0 失敗。涵蓋原收訊、管理者真標記、臺北跨日、加密 token、權限、原子排程、持久化額度、去重、來源取消、文字上限與 webhook 不等待 AI。
 
-測試使用合成資料、PGlite 與模擬 OpenAI／LINE HTTP，沒有正式金鑰或群組發訊。實際 API 模型權限、額度、LINE token 與端到端回覆仍待驗證。
+上述本機測試使用合成資料、PGlite 與模擬 OpenAI／LINE HTTP。之後的真實 OpenAI 與 LINE 四個指令驗收另記於 [PHASE2_ACCEPTANCE.md](PHASE2_ACCEPTANCE.md)，不混為同一種驗證。

@@ -8,6 +8,8 @@ Your Intelligent Work Assistant
 
 **2026-11-06 已通過原允許測試群的實際 LINE 入庫與收回驗收。** 使用者在 LINE 傳送合成文字後，Supabase 精確匹配 1 則；收回同一則後，文字列為 0、撤回紀錄為 1。KIKI 維持 `record`，私網、受限帳號、`db:check` 與 HTTPS 健康／就緒檢查皆已通過。共享 ACL 調整保留其他 26 個角色的有效權限；專用角色總連線上限 4。詳細證據與尚未驗證範圍見 [第一階段驗收紀錄](docs/PHASE1_ACCEPTANCE.md)。
 
+**2026-11-06 第二階段已啟用，四個指令皆通過真實 LINE 測試。** 管理者真正標記 KIKI 後的「幫助、狀態、今日摘要、今日待辦」均已成功回覆；摘要與待辦使用 OpenAI 整理一則合成討論，決議、負責人、期限與引用時間均符合原文。四項工作各嘗試一次、短期回覆 token 均已清除。正式環境為 `ASSISTANT_ENABLED=true`，原始碼預設仍關閉。驗收版本、資料範圍與尚未實測項目見 [第二階段驗收紀錄](docs/PHASE2_ACCEPTANCE.md)。
+
 正式對外名稱為「綺綺 KIKI｜智慧秘書」，英文副標為「Your Intelligent Work Assistant」；套件、容器映像與其他需要 ASCII 的技術名稱統一使用 `kiki-work-assistant`。使用者指定的 GitHub 儲存庫為 [luckyseal0923/KIKI-Work-assistant](https://github.com/luckyseal0923/KIKI-Work-assistant)，儲存庫名稱維持原樣；本次交付分支為 [`codex/kiki-phase1`](https://github.com/luckyseal0923/KIKI-Work-assistant/tree/codex/kiki-phase1)。既有來源已完成 discover 部署；之後的每次推送仍須個別核對部署結果，不能把程式碼上傳當成新版本已部署。
 
 ## 開始方式
