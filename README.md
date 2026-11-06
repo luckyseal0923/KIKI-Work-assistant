@@ -6,9 +6,9 @@ Your Intelligent Work Assistant
 
 將一個明確允許的測試群文字，經 LINE 原始本文簽章驗證後，寫入你已建立的共用自架 Supabase `linebot` 區域。部署目標為 Coolify，使用受限的 PostgreSQL 帳號直接連線。
 
-**2026-11-06 已完成 discover 模式的雲端部署與群組事件識別；資料庫連線、權限驗收與正式保存仍需完成後續步驟。** 本機測試通過或健康檢查成功，都不等於文字已保存。
+**2026-11-06 已完成群組事件識別、001 增量結構、經使用者批准的三個共享 pg_net 物件 ACL 調整、Compose 私網部署及受限帳號的真實 `db:check`。** 其他 26 個角色的有效權限不變；專用角色已依 002 開啟登入、總連線上限 4，應用權限檢查沒有問題。已啟用 `record` 且 HTTPS 健康／就緒正常；仍待使用者在原測試群送合成文字，完成實際入庫及撤回驗收，不能把服務健康當成訊息已保存。
 
-正式對外名稱為「綺綺 KIKI｜智慧秘書」，英文副標為「Your Intelligent Work Assistant」；套件、容器映像與其他需要 ASCII 的技術名稱統一使用 `kiki-work-assistant`。使用者指定的 GitHub 儲存庫為 [luckyseal0923/KIKI-Work-assistant](https://github.com/luckyseal0923/KIKI-Work-assistant)，儲存庫名稱維持原樣；本次交付分支為 [`codex/kiki-phase1`](https://github.com/luckyseal0923/KIKI-Work-assistant/tree/codex/kiki-phase1)。GitHub 是否已連接 Coolify 仍需確認，程式碼上傳不代表雲端部署完成。
+正式對外名稱為「綺綺 KIKI｜智慧秘書」，英文副標為「Your Intelligent Work Assistant」；套件、容器映像與其他需要 ASCII 的技術名稱統一使用 `kiki-work-assistant`。使用者指定的 GitHub 儲存庫為 [luckyseal0923/KIKI-Work-assistant](https://github.com/luckyseal0923/KIKI-Work-assistant)，儲存庫名稱維持原樣；本次交付分支為 [`codex/kiki-phase1`](https://github.com/luckyseal0923/KIKI-Work-assistant/tree/codex/kiki-phase1)。既有來源已完成 discover 部署；之後的每次推送仍須個別核對部署結果，不能把程式碼上傳當成新版本已部署。
 
 ## 開始方式
 

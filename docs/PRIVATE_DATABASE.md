@@ -22,7 +22,11 @@ Compose 只有 `kiki` 一個服務，仍由原 Dockerfile 建置，沿用原 Nod
 
 所有原應用 Runtime 變數仍由 `${變數}` 引用，不在 Compose 填入正式秘密。Compose 載入時會保留已存在的設定。新增的 `SUPABASE_DOCKER_NETWORK` 只供部署解析，不是應用程式的新資料介面；即使 Coolify 的 `env_file` 把它一併放入 Runtime，Node 收訊程式也不讀取這個欄位。
 
-2026-11-06 的準備狀態：Compose 語法與產生的雙網路設定已核對，但尚未部署或實測私有 DNS／TCP。原 KIKI 應用維持 Dockerfile 與 discover，待資料庫有效權限界線完成審核後，才繼續接通資料庫；不能以部署預覽代替連線驗收。
+2026-11-06 已經使用者明確批准，完成 Compose 雙網路部署、原 HTTPS 網域對應及私有 DNS／TCP 驗證。既有資料庫未啟用 TLS；確認同主機私有路徑後，使用 `DB_TLS=private` 與 `DB_PRIVATE_NETWORK_CONFIRMED=true`，沒有開放公網資料庫 port 或改動共享 stack。
+
+共享 ACL 僅調整 `net.http_request_queue`、`net._http_response`、`net.http_request_queue_id_seq`：原 PUBLIC 權限改為保留現有角色的明示授權，排除 `linebot_app`。提交後新查詢確認其他 26 角色的 442 組有效權限不變；專用角色在三物件無權限，且沒有可實際存取的外區物件。使用者在安全終端設定專用 SCRAM 密碼後，已套用 002 的 LOGIN、總連線上限 4 與短逾時設定，並由 KIKI 容器以真正受限帳號執行 `npm run db:check`，回報 `ok: true` 且所有問題清單為空。record 程序已啟動，仍待原測試群合成文字的實際入庫／撤回驗收。
+
+外區存取須同時核對 schema `USAGE`、表級及欄位級權限。只有表的 ACL 不代表角色能實際使用該物件；本次交易檢查已與原應用 `database-audit.js` 的語義對齊，沒有修改應用檢查或增加物件白名單。完整前後快照、實際套用 SQL、回復 SQL 與提交後比對紀錄保存在本機忽略版本控制的 `outputs/`；未將正式網路名稱或秘密提交到儲存庫。
 
 若伺服器 TLS 未啟用，只能在已確認的同主機私有網路路徑上，依既有 `DB_TLS=private` 與 `DB_PRIVATE_NETWORK_CONFIRMED=true` 流程設定；不能用略過憑證驗證或公開 `5432` 的方式處理。
 

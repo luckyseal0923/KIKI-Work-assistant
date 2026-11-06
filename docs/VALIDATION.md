@@ -65,11 +65,27 @@ skipped 0
 
 ## 尚未驗證
 
-- 此機沒有可用的 Docker CLI；尚未實際建置或執行 Docker 映像，也未在 Node.js 24 容器內重跑測試。
+- 此機沒有可用的 Docker CLI；未在本機建置或執行 Docker 映像，也未在 Node.js 24 容器內重跑測試。既有 Coolify Dockerfile discover 部署與健康端點已另行驗證。
 - PGlite 是單程序記憶體引擎；未以原生 PostgreSQL 多個 TCP 連線壓測同時交易的列鎖、負載或網路斷線。鎖定順序與交易路徑已完成程式檢查。
-- 尚未套用 SQL 到使用者的共用 Supabase，也未以實際 `linebot_app` 連線驗證現行資料與權限。
-- GitHub 原始碼目標已指定；尚未確認該儲存庫與 Coolify 的連接、部署主機與容器網路、TLS／CA、收訊子網域與 DNS。
-- 尚未輸入 Channel secret、資料庫專用密碼或其他正式秘密。
-- 尚未部署、填寫 LINE Webhook URL、取得真實測試群 ID，或完成 LINE 到 Supabase 的端到端入庫／編輯／撤回驗收。
+- `001`、三個 pg_net 物件的共享 ACL，以及 `002` 已實際套用。使用真正 `linebot_app` 的連線已通過應用 `db:check`；尚未進行正式負載與多 TCP 連線的壓力測試。
+- GitHub 來源、Compose 雙網路部署、原收訊 HTTPS 與 DNS、私網 DNS／TCP 及資料庫認證已確認。資料庫 TLS 設定實際為 off，僅在確認的私有容器路徑使用既有 private 模式；未測試其他網路或公開資料庫連線。
+- Channel secret 與專用資料庫密碼均由使用者填入，沒有讀取或輸出秘密；群組事件簽章及真實受限帳號認證皆已驗證。
+- LINE Verify 與群組事件識別已完成；尚未完成 LINE 到 Supabase 的端到端入庫／編輯／撤回驗收。
 
 請依 `docs/DEPLOY.md` 完成這些雲端步驟後，再判定第一階段串接成功。單純 LINE Verify 或健康檢查成功，不等於資料已保存。
+
+## 2026-11-06 共享 ACL 的實際驗證
+
+使用者明確批准後，僅調整 pg_net 的請求表、回應表與請求序列，不改其他物件 ACL、schema、函式、RLS 或角色成員關係。交易內及提交後新查詢共核對 27 角色的 459 組有效權限與 grant option；只有 `linebot_app` 的 17 組被移除，其他 26 個角色的 442 組保持一致。提交後確認 PUBLIC ACL、專用角色三物件權限、可存取外區物件、可執行外區 SECURITY DEFINER、可寫 schema 與角色成員關係皆為 0，角色仍 NOLOGIN。
+
+首次交易因提案檢查遺漏 schema USAGE 而中止，已核對原 ACL 未被提交改動；修正交易檢查以符合應用原有的 schema／表／欄位權限語義後，才完成提交。應用程式與其安全檢查未修改，也沒有將 pg_net 加入例外。
+
+另外使用既有 PGlite 與合成物件通過 9 項 ACL 套用、精確回復及失敗回滾測試；測試 fixture 的版本／extension 條件及系統角色名單與實際 PG15 不同。未讀取共享表、統計檢視或序列內容，未重跑無關的原收訊測試。這些結果不能取代既有 Database Webhook 的合成流程驗收、真正應用帳號的認證與 LINE→Supabase 驗收。
+
+## 2026-11-06 私網與 record 部署驗證
+
+已在 KIKI 新 Compose 容器確認：指定資料庫容器名稱正確、解析至私有 IPv4、TCP 5432 可達，未輸出內部 IP 或憑證。以使用者親自設定的專用密碼執行實際 `npm run db:check`，回報 `ok: true`；issues、externalTables、externalDefiners、memberships、writableSchemas 均為空。專用角色 LOGIN、連線上限 4、NOINHERIT 與所有高權限旗標關閉的狀態已另行核對。
+
+持久化 private 模式與確認旗標後，部署 record，啟動紀錄確認 mode=record；正式 Runtime 設定檢查及以該設定連線的合成測試查詢均成功。apex `/healthz`、`/readyz` 與原 www `/healthz` 皆 HTTPS 200，未簽章空 `/webhook` 401，沒有略過 TLS 憑證驗證。此處 HTTPS 指對外收訊；資料庫傳輸使用已確認的同主機私網，兩者不能混為一談。
+
+實際 LINE 入庫與撤回仍等待使用者送出指定合成測試訊息；只查該訊息與既定允許群組的匹配結果，不讀取其他聊天內容、成員或完整群組 ID。
