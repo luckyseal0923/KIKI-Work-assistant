@@ -1,6 +1,6 @@
 # 綺綺 KIKI｜智慧秘書
 
-**2026-11-07 第四階段已部署啟用，85 項本機測試通過，真實 LINE 流程驗收中。** 新增短期接續對話、確認後才寫入的待辦／決議／行程及變更歷程，並以精選來源預算與「再找更早的」降低重送歷史的用量。005 已 COMMIT，新旗標資料庫稽核、正式啟動與 HTTPS 健康／就緒已通過；初次提案測試發現負責人漏列，已補修正與回歸測試，須重新驗證。原始碼 `ASSISTANT_WORKSPACE_ENABLED` 預設仍為 false。見 [操作與部署](docs/WORKSPACE_ASSISTANT.md)、[用量控制](docs/COST_CONTROL.md)、[精確資料庫影響與復原](docs/WORKSPACE_DATABASE_CHANGE.md)、[本階段驗證範圍](docs/PHASE4_ACCEPTANCE.md)。
+**2026-11-07 第四階段已部署啟用，87 項本機測試通過，真實 LINE 流程驗收中。** 新增短期接續對話、確認後才寫入的待辦／決議／行程及變更歷程，並以精選來源預算與「再找更早的」降低重送歷史的用量。005 已 COMMIT，新旗標資料庫稽核、正式啟動與 HTTPS 健康／就緒已通過；初次提案測試發現負責人漏列，已補修正與回歸測試，須重新驗證。原始碼 `ASSISTANT_WORKSPACE_ENABLED` 預設仍為 false。見 [操作與部署](docs/WORKSPACE_ASSISTANT.md)、[用量控制](docs/COST_CONTROL.md)、[精確資料庫影響與復原](docs/WORKSPACE_DATABASE_CHANGE.md)、[本階段驗證範圍](docs/PHASE4_ACCEPTANCE.md)。
 
 Your Intelligent Work Assistant
 

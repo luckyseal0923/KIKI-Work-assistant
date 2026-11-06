@@ -13,7 +13,7 @@ import {WorkStore} from '../src/work-store.js';
 import {AssistantWorker} from '../src/assistant-worker.js';
 import {OpenAIDialogue,validatePlan} from '../src/assistant-dialogue.js';
 import {auditDatabase} from '../src/database-audit.js';
-import {normalizeWorkDate,validateWorkActions,workspaceControl,fastFollowup,isFollowup,renderProposal,workQueryDate} from '../src/work-actions.js';
+import {normalizeWorkDate,validateWorkActions,workspaceControl,fastFollowup,isFollowup,directWorkPlan,normalizeRequest,renderProposal,workQueryDate} from '../src/work-actions.js';
 import {estimateModelCost,summarizeUsage} from '../src/assistant-cost.js';
 
 const owner='U'+'1'.repeat(32),other='U'+'2'.repeat(32),third='U'+'3'.repeat(32),secret='synthetic-workspace-secret';
@@ -91,6 +91,18 @@ test('subjectless owner and deadline questions use context and ambiguous work ta
   assert.equal(isFollowup('什麼是 SMART 目標'),false);
   assert.equal(fastFollowup('是由誰負責',null),null);
   assert.equal(fastFollowup('是由誰負責',{scope:{mode:'work_query'},records:[{},{}]}).mode,'clarify');
+});
+
+test('leading list numbers normalize without altering dates or bypassing external-action routing',()=>{
+  for(const request of ['① 是由誰負責','② 是由誰負責','2. 是由誰負責','（2） 是由誰負責']){
+    assert.equal(normalizeRequest(request),'是由誰負責');assert.equal(isFollowup(request),true);
+  }
+  assert.equal(normalizeRequest('11/10 我有什麼行程'),'11/10 我有什麼行程');
+  assert.equal(normalizeRequest('11.10 我有什麼行程'),'11.10 我有什麼行程');
+  assert.equal(directWorkPlan('① 新增待辦：由甲負責教材').mode,'work_propose');
+  assert.equal(directWorkPlan('新增行程：寫入 Google 行事曆'),null);
+  assert.equal(directWorkPlan('新增待辦：根據群組討論安排工作'),null);
+  assert.equal(workspaceControl('③ 確認 P1234ABCD').action,'confirm');
 });
 
 test('workspace database, bounded conversation, quoted replies and confirmation state machine',async t=>{
@@ -247,22 +259,47 @@ test('workspace database, bounded conversation, quoted replies and confirmation 
     }});
     const worker=new AssistantWorker({config:f.config,store:f.store,workspace:f.workspace,dialogue,replier:{reply:async(token,text)=>replies.push(text)}});
     const initial=await f.command('新增待辦：測試角色甲明天中午整理教材');await worker.process(initial.job);
-    assert.equal(calls.length,2);assert.match(replies.at(-1),/尚未寫入正式/);
+    assert.equal(calls.length,1);assert.equal(calls[0].text.format.name,'kiki_work_proposal');assert.match(replies.at(-1),/尚未寫入正式/);
     const {rows:[proposal]}=await db.query('SELECT code FROM linebot.work_proposals WHERE source_event_id=$1',[initial.job.event_id]);assert.ok(proposal);
     assert.equal((await f.workspace.readItems(initial.job)).items.length,0);
     const confirm=await f.command('確認 '+proposal.code);await worker.process(confirm.job);
-    assert.equal(calls.length,2);assert.match(replies.at(-1),/工作已確認/);
+    assert.equal(calls.length,1);assert.match(replies.at(-1),/工作已確認/);
     const item=(await f.workspace.readItems(confirm.job)).items[0];assert.equal(item.body.owner,'測試角色甲');
     const metrics=(await db.query('SELECT status,api_call_count,encrypted_reply_token FROM linebot.assistant_jobs WHERE event_id=$1',[confirm.job.event_id])).rows[0];
     assert.equal(metrics.status,'sent');assert.equal(metrics.api_call_count,0);assert.equal(metrics.encrypted_reply_token,null);
-    const usage=await f.workspace.usage(confirm.job);assert.equal(usage.today.input,60);assert.equal(usage.today.output,40);assert.equal(usage.today.unpriced,0);
-    const change=await f.command('這件事完成了');await worker.process(change.job);assert.equal(calls.length,3);
+    const usage=await f.workspace.usage(confirm.job);assert.equal(usage.today.input,30);assert.equal(usage.today.output,20);assert.equal(usage.today.unpriced,0);
+    const change=await f.command('這件事完成了');await worker.process(change.job);assert.equal(calls.length,2);
     assert.equal((await f.workspace.readItems(change.job,{itemCode:item.code,status:null})).items[0].body.status,'active');
     const pending=await f.workspace.pending(change.job);assert.equal(pending.length,1);
-    const final=await f.command('確認 '+pending[0].code);await worker.process(final.job);assert.equal(calls.length,3);
+    const final=await f.command('確認 '+pending[0].code);await worker.process(final.job);assert.equal(calls.length,2);
     const updated=(await f.workspace.readItems(final.job,{itemCode:item.code,status:null})).items[0];
     assert.equal(updated.body.status,'done');assert.equal(updated.version,2);assert.equal(updated.body.due_at,item.body.due_at);
     for(const call of calls){const text=JSON.stringify(call);for(const value of [owner,other,f.config.allowedGroupId,secret,env.OPENAI_API_KEY])assert.equal(text.includes(value),false);}
+  });
+
+  await t.test('numbered create and two numbered followups each use only their intended model call',async()=>{
+    const f=fixture(),calls=[],replies=[];
+    const dialogue=new OpenAIDialogue(f.config.assistant,{fetchImpl:async(url,options)=>{
+      const body=JSON.parse(options.body),input=JSON.parse(body.input[0].content[0].text);calls.push(body);
+      assert.notEqual(body.text.format.name,'kiki_request_plan');assert.doesNotMatch(input.owner_request,/^[①-⑳]/u);
+      let value;
+      if(body.text.format.name==='kiki_work_proposal')value={actions:[rawAction({topic:'KIKI-WORK-20261107-02',title:'整理合成教材',owner:null,due_text:'2026/11/10 中午'})]};
+      else{
+        assert.match(input.conversation.originalRequest,/由測試角色丁負責/);
+        assert.equal(input.conversation.previousProposal[0].body.owner,'測試角色丁');
+        value={title:'合成追問',blocks:[{text:input.owner_request==='是由誰負責'?'測試角色丁負責，尚未確認。':'期限 2026/11/10 中午，尚未確認。',refs:[]}]};
+      }
+      return new Response(JSON.stringify({status:'completed',output:[{type:'message',role:'assistant',content:[{type:'output_text',text:JSON.stringify(value)}]}],usage:{input_tokens:20,output_tokens:10}}));
+    }});
+    const worker=new AssistantWorker({config:f.config,store:f.store,workspace:f.workspace,dialogue,replier:{reply:async(token,text)=>replies.push(text)}});
+    for(const request of ['① 新增待辦：主題 KIKI-WORK-20261107-02，由測試角色丁負責整理合成教材，期限 2026/11/10 中午。','② 是由誰負責','③ 期限呢']){
+      const {job}=await f.command(request);await worker.process(job);
+      const metrics=(await db.query('SELECT status,api_call_count FROM linebot.assistant_jobs WHERE event_id=$1',[job.event_id])).rows[0];
+      assert.equal(metrics.status,'sent');assert.equal(metrics.api_call_count,1);
+    }
+    assert.equal(calls.length,3);assert.equal(replies.length,3);assert.match(replies[0],/測試角色丁/);assert.match(replies[1],/測試角色丁/);assert.match(replies[2],/2026\/11\/10/u);
+    const job={group_id:f.config.allowedGroupId,operator_user_id:owner};
+    assert.equal((await f.workspace.pending(job)).length,1);assert.equal((await f.workspace.readItems(job)).items.length,0);
   });
 
   await t.test('replacing a pending proposal invalidates the old confirmation code',async()=>{

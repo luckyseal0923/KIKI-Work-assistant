@@ -1,5 +1,5 @@
 import {randomBytes} from 'node:crypto';
-import {describeWork,renderProposal,PROPOSAL_CODE,WORK_CODE} from './work-actions.js';
+import {describeWork,renderProposal,normalizeRequest,PROPOSAL_CODE,WORK_CODE} from './work-actions.js';
 import {speakerLabel} from './assistant-threads.js';
 import {taipeiDay} from './assistant-command.js';
 import {summarizeUsage} from './assistant-cost.js';
@@ -108,8 +108,8 @@ export class WorkStore {
     }
     if(!valid){await this.pool.query(`UPDATE linebot.assistant_context SET payload='{}'::jsonb WHERE group_id=$1 AND operator_user_id=$2 AND updated_at=$3`,[job.group_id,job.operator_user_id,row.updated_at]);return null;}
     const byId=new Map(rows.map(r=>[r.message_id,r]));
-    const request=byId.get(p.request_id).message_text.slice(p.request_offset||0).trim().slice(0,2000);
-    const originalRequest=byId.get(origin.id).message_text.slice(origin.offset||0).trim().slice(0,2000);
+    const request=normalizeRequest(byId.get(p.request_id).message_text.slice(p.request_offset||0)).slice(0,2000);
+    const originalRequest=normalizeRequest(byId.get(origin.id).message_text.slice(origin.offset||0)).slice(0,2000);
     let snapshot=null;
     if(p.messages?.some(m=>m.id)){
       const selected=p.messages.filter(m=>byId.has(m.id));const refById=new Map(selected.map(m=>[m.id,m.ref]));

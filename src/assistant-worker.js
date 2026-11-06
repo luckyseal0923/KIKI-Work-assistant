@@ -2,7 +2,7 @@ import { decryptReplyToken, helpText, taipeiDay } from './assistant-command.js';
 import { AssistantError } from './assistant-clients.js';
 import { UNSUPPORTED_TASK } from './assistant-dialogue.js';
 import { resolveRequestPlan } from './assistant-scope.js';
-import {workspaceControl,isFollowup,fastFollowup,describeWork,renderProposal,workQueryDate} from './work-actions.js';
+import {workspaceControl,isFollowup,fastFollowup,directWorkPlan,normalizeRequest,describeWork,renderProposal,workQueryDate} from './work-actions.js';
 
 const time = value => new Intl.DateTimeFormat('zh-TW', { timeZone: 'Asia/Taipei', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(value));
 
@@ -133,7 +133,8 @@ export class AssistantWorker {
       } else if (job.kind === 'assist') {
         if (!this.config.assistant.freeformEnabled || !this.dialogue) throw new AssistantError('source_changed');
         if (remaining() < 9000) throw new AssistantError('expired');
-        const request = await this.store.readRequest(job);
+        const rawRequest = await this.store.readRequest(job);
+        const request = rawRequest&&normalizeRequest(rawRequest);
         if (!request || !await this.store.unchanged(job, null)) throw new AssistantError('source_changed');
         const deadline = this.now() + Math.min(20000, remaining() - 7000);
         const aiRemaining = () => {
@@ -149,7 +150,7 @@ export class AssistantWorker {
           }
         };
         const memory=this.workspace&&isFollowup(request)?await this.workspace.readContext(job):null;
-        let proposed=fastFollowup(request,memory);
+        let proposed=(this.workspace&&directWorkPlan(request))||fastFollowup(request,memory);
         if(!proposed){metrics.apiCalls=(metrics.apiCalls||0)+1;pendingApi=true;proposed=await this.dialogue.plan(request, job.range_start,
           { signal: this.abort.signal, timeout: Math.min(6000, aiRemaining()),context:memory });pendingApi=false;}
         addUsage(proposed);

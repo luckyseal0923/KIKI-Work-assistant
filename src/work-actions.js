@@ -6,8 +6,18 @@ const STATE={active:'未完成／有效',in_progress:'進行中',done:'已完成
 const KIND={task:'待辦',decision:'決議',event:'行程'};
 const CONTEXT_QUESTION=/^(?:請問)?(?:是由誰負責|由誰負責|是誰負責|誰負責|負責人是誰|負責人呢|誰來處理|什麼時候(?:到期|截止|完成)?|何時(?:到期|截止|完成)?|期限(?:是什麼時候|呢)?|地點(?:在哪裡|呢)|在哪裡|時間呢|後來呢|目前呢|進度如何|完成了嗎|確認了嗎|決定了嗎|有定案嗎|還缺什麼)(?:的)?[。！？!?]?$/u;
 
+export function normalizeRequest(request){
+  return request.trim().replace(/^(?:[①-⑳]\s*|(?:\([1-9]\d?\)|（[1-9]\d?）|[1-9]\d?[.、)])\s+)/u,'').trim();
+}
+export function directWorkPlan(request){
+  const value=normalizeRequest(request);
+  if(!/^(?:請\s*)?(?:新增|建立)(?:待辦|工作|任務|決議|行程)\s*[:：]\s*\S/u.test(value))return null;
+  if(/根據|依照|群組|討論|訊息|剛才|之前|過去|Google|Gmail|Outlook|行事曆|日曆|calendar|寄信|寄出|發送|通知|提醒我|密碼|金鑰|權限|https?:/iu.test(value))return null;
+  return {mode:'work_propose',keyword:null,search_terms:[],source_scope:'none',clarification:null,inputTokens:0,outputTokens:0};
+}
+
 export function workspaceControl(request) {
-  const text=request.trim().replace(/[。！!？?]+$/u,'').trim();
+  const text=normalizeRequest(request).replace(/[。！!？?]+$/u,'').trim();
   if(/^(工作清單|我的待辦|有哪些未完成的?工作|有哪些工作未完成|還有哪些(?:工作|待辦)(?:沒完成|未完成))$/u.test(text))return {action:'list'};
   if(text==='待確認提案')return {action:'pending'};
   if(/^(重置對話|清除對話記憶)$/u.test(text))return {action:'reset'};
@@ -19,11 +29,12 @@ export function workspaceControl(request) {
 }
 
 export function isFollowup(request) {
-  return CONTEXT_QUESTION.test(request.trim())||/^(那|這份|這個|這件|這些|剛才|剛剛|上一|再|繼續|改短|簡短一點)|^(?:請|幫我|把|將)?(?:剛才|剛剛|上面|上述|這件)|(?:他|她|乙|甲|丙)呢[？?]?$/u.test(request.trim());
+  const value=normalizeRequest(request);
+  return CONTEXT_QUESTION.test(value)||/^(那|這份|這個|這件|這些|剛才|剛剛|上一|再|繼續|改短|簡短一點)|^(?:請|幫我|把|將)?(?:剛才|剛剛|上面|上述|這件)|(?:他|她|乙|甲|丙)呢[？?]?$/u.test(value);
 }
 export function fastFollowup(request,context){
   if(!context)return null;
-  const value=request.trim();
+  const value=normalizeRequest(request);
   if(CONTEXT_QUESTION.test(value)){
     const targets=context.previousProposal?.actions||context.records||[];
     if(['work_query','work_propose'].includes(context.scope?.mode)&&targets.length>1)return {mode:'clarify',keyword:null,search_terms:[],source_scope:'none',clarification:'前次包含多筆工作，請指定要追問的工作代碼或主題。',inputTokens:0,outputTokens:0};
@@ -36,12 +47,12 @@ export function fastFollowup(request,context){
     return {mode:'work_propose',keyword:null,search_terms:[],source_scope:'none',clarification:null,
       inheritedItemCode:context.records?.[0]?.code||context.previousProposal?.actions?.[0]?.target||null,inputTokens:0,outputTokens:0};
   }
-  if(/^(?:請)?(?:再找更早的|再往前找|找更早的|更早之前的呢)[。！？!?]?$/u.test(request.trim())&&context.scope?.query&&context.snapshot?.sourceRefs?.length){
+  if(/^(?:請)?(?:再找更早的|再往前找|找更早的|更早之前的呢)[。！？!?]?$/u.test(value)&&context.scope?.query&&context.snapshot?.sourceRefs?.length){
     const before=new Date(Math.min(...context.snapshot.sourceRefs.map(r=>new Date(r.at).getTime()))).toISOString();
     const query={...context.scope.query,range_start:'1970-01-01T00:00:00.000Z',range_end:before,history:true,scopeLabel:`沿用前次主題，查找 ${taipeiDay(before).day} ${new Date(before).toLocaleTimeString('zh-TW',{timeZone:'Asia/Taipei',hour12:false})} 以前的已保存紀錄`};
     return {mode:'group_history',keyword:query.keyword,search_terms:query.searchTerms||[],clarification:null,source_scope:'none',inheritedQuery:query,inputTokens:0,outputTokens:0};
   }
-  if(/^(?:請)?(?:再(?:簡短|短|精簡)一點|再短些|改成條列式|改成表格|那(?:甲|乙|丙|他|她)呢)[。！？!?]?$/u.test(request.trim())){
+  if(/^(?:請)?(?:再(?:簡短|短|精簡)一點|再短些|改成條列式|改成表格|那(?:甲|乙|丙|他|她)呢)[。！？!?]?$/u.test(value)){
     return {mode:'followup',keyword:null,clarification:null,source_scope:'none',inputTokens:0,outputTokens:0};
   }
   return null;
