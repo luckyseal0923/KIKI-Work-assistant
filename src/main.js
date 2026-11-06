@@ -8,6 +8,7 @@ import { AssistantStore } from './assistant-store.js';
 import { AssistantWorker } from './assistant-worker.js';
 import { OpenAISummarizer, LineReplier } from './assistant-clients.js';
 import { OpenAIDialogue } from './assistant-dialogue.js';
+import {WorkStore} from './work-store.js';
 
 let pool;
 let server;
@@ -19,7 +20,7 @@ try {
     pool = new pg.Pool(config.database);
     pool.on('error', () => log('database_connection_error'));
     const audit = await auditDatabase(pool, { assistantEnabled: config.assistant.enabled,
-      freeformEnabled: config.assistant.freeformEnabled });
+      freeformEnabled: config.assistant.freeformEnabled,workspaceEnabled:config.assistant.workspaceEnabled });
     if (!audit.ok) {
       log('database_audit_failed', { issues: audit.issues });
       throw new Error('Database audit failed');
@@ -29,6 +30,7 @@ try {
     if (config.assistant.enabled) assistantWorker = new AssistantWorker({ config,
       store: new AssistantStore(pool, config), summarizer: new OpenAISummarizer(config.assistant),
       dialogue: config.assistant.freeformEnabled ? new OpenAIDialogue(config.assistant) : null,
+      workspace:config.assistant.workspaceEnabled?new WorkStore(pool,config):null,
       replier: new LineReplier(config.assistant.lineAccessToken), log });
   }
   server = createServer({ config, store, assistantWorker, log });
@@ -39,7 +41,7 @@ try {
   server.listen(config.port, '0.0.0.0', () => {
     assistantWorker?.start();
     log('server_started', { mode: config.mode, assistant_enabled: config.assistant.enabled,
-      freeform_enabled: Boolean(config.assistant.freeformEnabled) });
+      freeform_enabled: Boolean(config.assistant.freeformEnabled),workspace_enabled:Boolean(config.assistant.workspaceEnabled) });
   });
   let stopping = false;
   const stop = () => {

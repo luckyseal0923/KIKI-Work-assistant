@@ -1,9 +1,11 @@
 const BASE_TABLES = ['messages', 'webhook_events', 'message_state'];
 
-export async function auditDatabase(db, { assistantEnabled = false, freeformEnabled = false } = {}) {
-  const TABLES = assistantEnabled ? [...BASE_TABLES, 'assistant_jobs'] : BASE_TABLES;
+export async function auditDatabase(db, { assistantEnabled = false, freeformEnabled = false,workspaceEnabled=false } = {}) {
+  const TABLES = [...(assistantEnabled ? [...BASE_TABLES, 'assistant_jobs'] : BASE_TABLES),
+    ...(workspaceEnabled?['assistant_context','work_items','work_proposals','work_events']:[])];
   const issues = [];
   if (freeformEnabled && !assistantEnabled) issues.push('freeform_requires_assistant');
+  if(workspaceEnabled&&!freeformEnabled)issues.push('workspace_requires_freeform');
   const { rows: [role] } = await db.query(`SELECT current_user AS name,
     rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls, rolinherit, rolcanlogin
     FROM pg_catalog.pg_roles WHERE rolname = current_user`);
@@ -26,7 +28,8 @@ export async function auditDatabase(db, { assistantEnabled = false, freeformEnab
   for (const name of TABLES) {
     const table = tables.find(t => t.relname === name);
     if (!table || !table.relrowsecurity || table.owned || !table.can_select || !table.can_insert ||
-        (name !== 'webhook_events' && !table.can_update) || (name === 'messages' && !table.can_delete)) {
+        (!['webhook_events','work_events'].includes(name) && !table.can_update) || (name === 'messages' && !table.can_delete)
+        || (name==='work_events'&&table.can_update)||(['assistant_context','work_items','work_proposals','work_events'].includes(name)&&table.can_delete)) {
       issues.push(`table_permissions:${name}`);
     }
   }
@@ -44,6 +47,13 @@ export async function auditDatabase(db, { assistantEnabled = false, freeformEnab
     encrypted_reply_token,attempt_count,started_at,finished_at,error_code,message_count,input_truncated,
     input_tokens,output_tokens FROM linebot.assistant_jobs WHERE false`);
   if (freeformEnabled) await db.query('SELECT request_offset FROM linebot.assistant_jobs WHERE false');
+  if(workspaceEnabled){
+    await db.query('SELECT model_name,api_call_count FROM linebot.assistant_jobs WHERE false');
+    await db.query('SELECT group_id,operator_user_id,payload,updated_at,expires_at FROM linebot.assistant_context WHERE false');
+    await db.query('SELECT code,group_id,version,body,sources,created_at,updated_at FROM linebot.work_items WHERE false');
+    await db.query('SELECT code,group_id,operator_user_id,source_event_id,actions,sources,status,created_at,expires_at,applied_at,confirmed_event_id FROM linebot.work_proposals WHERE false');
+    await db.query('SELECT proposal_code,ordinal,item_code,group_id,version,previous_body,next_body,confirmed_event_id,created_at FROM linebot.work_events WHERE false');
+  }
 
   // PUBLIC grants and column grants still count even with NOINHERIT.
   // Catalog metadata only; this does not query any other application's rows.

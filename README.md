@@ -1,5 +1,7 @@
 # 綺綺 KIKI｜智慧秘書
 
+**2026-11-07 第四階段本機修改完成，80 項測試通過，尚未正式啟用。** 新增短期接續對話、確認後才寫入的待辦／決議／行程及變更歷程，並以精選來源預算與「再找更早的」降低重送歷史的用量。預設 `ASSISTANT_WORKSPACE_ENABLED=false`；完成 005 與稽核後才能啟用。見 [操作與部署](docs/WORKSPACE_ASSISTANT.md)、[用量控制](docs/COST_CONTROL.md)、[精確資料庫影響與復原](docs/WORKSPACE_DATABASE_CHANGE.md)、[本階段驗證範圍](docs/PHASE4_ACCEPTANCE.md)。
+
 Your Intelligent Work Assistant
 
 第一階段：LINE 單群文字收訊端。第二階段：管理者標記 KIKI 後的今日摘要與待辦（預設關閉）。

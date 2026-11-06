@@ -39,6 +39,9 @@ export function assistantConfig(env, mode) {
     throw new ConfigError('ASSISTANT_FREEFORM_ENABLED');
   }
   const freeformEnabled = env.ASSISTANT_FREEFORM_ENABLED === 'true';
+  if(env.ASSISTANT_WORKSPACE_ENABLED!==undefined&&!['true','false',''].includes(env.ASSISTANT_WORKSPACE_ENABLED))throw new ConfigError('ASSISTANT_WORKSPACE_ENABLED');
+  const workspaceEnabled=env.ASSISTANT_WORKSPACE_ENABLED==='true';
+  if(workspaceEnabled&&(!freeformEnabled||env.ASSISTANT_ENABLED!=='true'))throw new ConfigError('ASSISTANT_WORKSPACE_ENABLED');
   if (env.ASSISTANT_ENABLED !== 'true') {
     if (freeformEnabled) throw new ConfigError('ASSISTANT_FREEFORM_ENABLED');
     return { enabled: false };
@@ -49,7 +52,9 @@ export function assistantConfig(env, mode) {
   const model = env.OPENAI_MODEL || 'gpt-6-luna';
   if (!['gpt-6-luna', 'gpt-6.1-sol', 'gpt-6-astra'].includes(model)) throw new ConfigError('OPENAI_MODEL');
   return {
-    enabled: true, freeformEnabled, operatorUserId, model,
+    enabled: true, freeformEnabled, workspaceEnabled, operatorUserId, model,
+    contextMessages:boundedInteger(env,'ASSISTANT_CONTEXT_MESSAGES',20,5,50),
+    contextCharacters:boundedInteger(env,'ASSISTANT_CONTEXT_CHARACTERS',12000,2000,22000),
     openaiApiKey: required(env, 'OPENAI_API_KEY'),
     lineAccessToken: required(env, 'LINE_CHANNEL_ACCESS_TOKEN'),
     maxMessages: boundedInteger(env, 'ASSISTANT_MAX_MESSAGES', 100, 10, 100),

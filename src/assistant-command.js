@@ -1,4 +1,5 @@
 import { createCipheriv, createDecipheriv, createHash, hkdfSync, randomBytes } from 'node:crypto';
+import { workspaceControl } from './work-actions.js';
 
 export const USER_ID = /^U[0-9a-f]{32}$/i;
 const OFFSET = 8 * 60 * 60 * 1000;
@@ -29,8 +30,9 @@ export function decryptReplyToken(encoded, secret) {
   return Buffer.concat([decipher.update(data.subarray(29)), decipher.final()]).toString('utf8');
 }
 
-export function parseCommand(text, { freeformEnabled = false } = {}) {
+export function parseCommand(text, { freeformEnabled = false, workspaceEnabled=false } = {}) {
   const value = text.trim().replace(/[，,。.!！]+$/u, '').trim();
+  if(workspaceEnabled&&workspaceControl(value))return {kind:'workspace',keyword:null};
   if (/^(幫助|說明|help)$/iu.test(value)) return { kind: 'help', keyword: null };
   if (/^(狀態|status)$/iu.test(value)) return { kind: 'status', keyword: null };
   if (/^整理今天討論[，,]?\s*列出結論與待辦$/u.test(value)) return { kind: 'summary', keyword: null };
@@ -69,7 +71,7 @@ export function assistantJobForEvent(event, config, now = Date.now()) {
   const quota = taipeiDay(now);
   return {
     ...command,
-    ...(command.kind === 'assist' ? { requestOffset: index + length } : {}),
+    ...(['assist','workspace'].includes(command.kind) ? { requestOffset: index + length } : {}),
     operatorUserId: assistant.operatorUserId,
     sourceDigest: createHash('sha256').update(text).digest('hex'),
     rangeStart: range.start, rangeEnd: range.end,
@@ -85,5 +87,5 @@ export const HELP_TEXT = '綺綺 KIKI｜智慧秘書\n請先從群組成員清�
 export function helpText(config) {
   return HELP_TEXT + (config.assistant?.freeformEnabled
     ? '\n\n也可以直接交辦：\n• 解釋什麼是 SMART 目標\n• 把今天討論整理成會議紀錄\n• 找出過去 OSCE 討論的決議\n• 11/10 我有什麼行程\n• 將下面文字改成正式公告：……\n可查 KIKI 開始收錄後，本群仍保存的歷史文字；回覆會附來源時間，超出上限會標示部分內容。\n每次標記獨立處理；修改草稿時請附上原文。\n不執行寄信、排入外部行事曆或其他系統操作。'
-    : '');
+    : '')+(config.assistant?.workspaceEnabled?'\n\n工作秘書：\n• 工作清單\n• 待確認提案\n• 確認 P提案代碼\n• 取消提案 P提案代碼\n• 工作歷程 W工作代碼\n• 重置對話\n也可直接要求新增、完成、改期或取消工作；會先提出待確認提案。對話可接續約 30 分鐘，正式工作另行保存。':'');
 }

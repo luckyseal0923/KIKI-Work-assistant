@@ -38,7 +38,7 @@ export function resolveRequestPlan(plan, request, job) {
   const clarify = question => ({ ...plan, mode: 'clarify', keyword: null, clarification: question });
   if (eventQuery && dates.length && (dates.length !== 1 || !dates[0])) return clarify('請指定一個有效的行程日期，例如 11/10。');
   if (eventQuery && dates.length === 1 && dates[0]) {
-    plan = { ...plan, mode: 'group_history', keyword: null, clarification: null, eventDate: dates[0] };
+    plan = { ...plan, mode: 'group_history', keyword: null, clarification: null, eventDate: dates[0],...(plan.search_terms?{search_terms:[]}: {}) };
   }
   if (!['group_today','group_history'].includes(plan.mode)) return plan;
   if (HISTORY.test(request)) plan = { ...plan, mode: 'group_history' };
@@ -46,7 +46,7 @@ export function resolveRequestPlan(plan, request, job) {
   const codes = [...new Set(request.match(/\b[A-Z][A-Z0-9]*(?:[-_][A-Z0-9]+)+\b/giu)?.filter(v => /\d/u.test(v)) || [])];
   if (codes.some(v => v.length > 60)) return clarify('主題代碼請控制在 60 個字元內。');
   if (codes.length > 1) return clarify('請先指定一個主題代碼，讓我精確查找已保存的訊息。');
-  if (codes.length === 1) plan = { ...plan, keyword: codes[0] };
+  if (codes.length === 1) plan = { ...plan, keyword: codes[0],...(plan.search_terms?{search_terms:[]}: {}) };
   if (plan.mode === 'group_today') return { ...plan, history: false,
     sourceStart: today.start, sourceEnd: today.end, scopeLabel: `本群 ${today.day} 已保存訊息` };
   let start = 0, finish = end, label = '本群已保存歷史訊息';
