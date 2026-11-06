@@ -16,7 +16,7 @@ Compose 只有 `kiki` 一個服務，仍由原 Dockerfile 建置，沿用原 Nod
 2. 在 KIKI 的受保護 Runtime 設定中填入 `SUPABASE_DOCKER_NETWORK`，值須取自目標 Supabase 的已產生 Compose `networks.*.name`，不可猜 UUID、暫時 IP 或把 `localhost` 當成別的容器。
 3. 原應用的 General 選 Compose 作為 Build strategy，Base directory 保持 `/`，Compose location 為 `/compose.yaml`，儲存並載入 Git 中的定義。
 4. 檢查產生的設定：服務只有 `kiki`、建置來源仍是 `Dockerfile`，並同時連接既有 `coolify` 與指定的 Supabase 私有網路。不得有資料庫服務、主機 `ports:`、Docker socket 掛載或擴大容器權限。
-5. 在 Domains 將既有 KIKI HTTPS 網域對應至 `kiki` 服務的 `3000` port，保留原本的 www 轉址與 TLS。不要新增或改動 Supabase 網域。
+5. 在 Domains 將既有 KIKI HTTPS 網域對應至 `kiki` 服務的 `3000` port，保留原本的 www 網域與 TLS。不要新增或改動 Supabase 網域。
 6. 部署後重新核對 HTTPS `/healthz`、`/readyz`，以及未簽章的 `/webhook` 仍回 `401`。
 7. 從 KIKI 容器使用目標已確認的穩定 `container_name` 或網路別名測試 DNS 與 TCP port。僅有 DNS 成功或 TCP 成功不等於受限帳號已通過資料庫認證與權限檢查。
 
@@ -24,7 +24,7 @@ Compose 只有 `kiki` 一個服務，仍由原 Dockerfile 建置，沿用原 Nod
 
 2026-11-06 已經使用者明確批准，完成 Compose 雙網路部署、原 HTTPS 網域對應及私有 DNS／TCP 驗證。既有資料庫未啟用 TLS；確認同主機私有路徑後，使用 `DB_TLS=private` 與 `DB_PRIVATE_NETWORK_CONFIRMED=true`，沒有開放公網資料庫 port 或改動共享 stack。
 
-共享 ACL 僅調整 `net.http_request_queue`、`net._http_response`、`net.http_request_queue_id_seq`：原 PUBLIC 權限改為保留現有角色的明示授權，排除 `linebot_app`。提交後新查詢確認其他 26 角色的 442 組有效權限不變；專用角色在三物件無權限，且沒有可實際存取的外區物件。使用者在安全終端設定專用 SCRAM 密碼後，已套用 002 的 LOGIN、總連線上限 4 與短逾時設定，並由 KIKI 容器以真正受限帳號執行 `npm run db:check`，回報 `ok: true` 且所有問題清單為空。record 程序已啟動，仍待原測試群合成文字的實際入庫／撤回驗收。
+共享 ACL 僅調整 `net.http_request_queue`、`net._http_response`、`net.http_request_queue_id_seq`：原 PUBLIC 權限改為保留現有角色的明示授權，排除 `linebot_app`。提交後新查詢確認其他 26 角色的 442 組有效權限不變；專用角色在三物件無權限，且沒有可實際存取的外區物件。使用者在安全終端設定專用 SCRAM 密碼後，已套用 002 的 LOGIN、總連線上限 4 與短逾時設定，並由 KIKI 容器以真正受限帳號執行 `npm run db:check`，回報 `ok: true` 且所有問題清單為空。record 程序已啟動；原測試群的一則合成文字已驗證實際入庫，收回同一則後文字已移除，詳見 [第一階段驗收紀錄](PHASE1_ACCEPTANCE.md)。
 
 外區存取須同時核對 schema `USAGE`、表級及欄位級權限。只有表的 ACL 不代表角色能實際使用該物件；本次交易檢查已與原應用 `database-audit.js` 的語義對齊，沒有修改應用檢查或增加物件白名單。完整前後快照、實際套用 SQL、回復 SQL 與提交後比對紀錄保存在本機忽略版本控制的 `outputs/`；未將正式網路名稱或秘密提交到儲存庫。
 

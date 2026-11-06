@@ -6,7 +6,7 @@ Your Intelligent Work Assistant
 
 將一個明確允許的測試群文字，經 LINE 原始本文簽章驗證後，寫入你已建立的共用自架 Supabase `linebot` 區域。部署目標為 Coolify，使用受限的 PostgreSQL 帳號直接連線。
 
-**2026-11-06 已完成群組事件識別、001 增量結構、經使用者批准的三個共享 pg_net 物件 ACL 調整、Compose 私網部署及受限帳號的真實 `db:check`。** 其他 26 個角色的有效權限不變；專用角色已依 002 開啟登入、總連線上限 4，應用權限檢查沒有問題。已啟用 `record` 且 HTTPS 健康／就緒正常；仍待使用者在原測試群送合成文字，完成實際入庫及撤回驗收，不能把服務健康當成訊息已保存。
+**2026-11-06 已通過原允許測試群的實際 LINE 入庫與收回驗收。** 使用者在 LINE 傳送合成文字後，Supabase 精確匹配 1 則；收回同一則後，文字列為 0、撤回紀錄為 1。KIKI 維持 `record`，私網、受限帳號、`db:check` 與 HTTPS 健康／就緒檢查皆已通過。共享 ACL 調整保留其他 26 個角色的有效權限；專用角色總連線上限 4。詳細證據與尚未驗證範圍見 [第一階段驗收紀錄](docs/PHASE1_ACCEPTANCE.md)。
 
 正式對外名稱為「綺綺 KIKI｜智慧秘書」，英文副標為「Your Intelligent Work Assistant」；套件、容器映像與其他需要 ASCII 的技術名稱統一使用 `kiki-work-assistant`。使用者指定的 GitHub 儲存庫為 [luckyseal0923/KIKI-Work-assistant](https://github.com/luckyseal0923/KIKI-Work-assistant)，儲存庫名稱維持原樣；本次交付分支為 [`codex/kiki-phase1`](https://github.com/luckyseal0923/KIKI-Work-assistant/tree/codex/kiki-phase1)。既有來源已完成 discover 部署；之後的每次推送仍須個別核對部署結果，不能把程式碼上傳當成新版本已部署。
 
