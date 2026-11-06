@@ -35,14 +35,21 @@ export function assistantConfig(env, mode) {
   if (env.ASSISTANT_ENABLED !== undefined && !['true', 'false', ''].includes(env.ASSISTANT_ENABLED)) {
     throw new ConfigError('ASSISTANT_ENABLED');
   }
-  if (env.ASSISTANT_ENABLED !== 'true') return { enabled: false };
+  if (env.ASSISTANT_FREEFORM_ENABLED !== undefined && !['true','false',''].includes(env.ASSISTANT_FREEFORM_ENABLED)) {
+    throw new ConfigError('ASSISTANT_FREEFORM_ENABLED');
+  }
+  const freeformEnabled = env.ASSISTANT_FREEFORM_ENABLED === 'true';
+  if (env.ASSISTANT_ENABLED !== 'true') {
+    if (freeformEnabled) throw new ConfigError('ASSISTANT_FREEFORM_ENABLED');
+    return { enabled: false };
+  }
   if (mode !== 'record') throw new ConfigError('ASSISTANT_ENABLED');
   const operatorUserId = required(env, 'OPERATOR_USER_ID');
   if (!USER_ID.test(operatorUserId)) throw new ConfigError('OPERATOR_USER_ID');
   const model = env.OPENAI_MODEL || 'gpt-6-luna';
   if (!['gpt-6-luna', 'gpt-6.1-sol', 'gpt-6-astra'].includes(model)) throw new ConfigError('OPENAI_MODEL');
   return {
-    enabled: true, operatorUserId, model,
+    enabled: true, freeformEnabled, operatorUserId, model,
     openaiApiKey: required(env, 'OPENAI_API_KEY'),
     lineAccessToken: required(env, 'LINE_CHANNEL_ACCESS_TOKEN'),
     maxMessages: boundedInteger(env, 'ASSISTANT_MAX_MESSAGES', 100, 10, 100),

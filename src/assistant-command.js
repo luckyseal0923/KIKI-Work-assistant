@@ -29,13 +29,20 @@ export function decryptReplyToken(encoded, secret) {
   return Buffer.concat([decipher.update(data.subarray(29)), decipher.final()]).toString('utf8');
 }
 
-export function parseCommand(text) {
+export function parseCommand(text, { freeformEnabled = false } = {}) {
   const value = text.trim().replace(/[，,。.!！]+$/u, '').trim();
   if (/^(幫助|說明|help)$/iu.test(value)) return { kind: 'help', keyword: null };
   if (/^(狀態|status)$/iu.test(value)) return { kind: 'status', keyword: null };
   if (/^整理今天討論[，,]?\s*列出結論與待辦$/u.test(value)) return { kind: 'summary', keyword: null };
   const match = /^(今日摘要|今天摘要|整理今天|今日待辦|今天待辦)(?:\s+(.{1,60}))?$/u.exec(value);
-  if (match) return { kind: match[1].includes('待辦') ? 'todos' : 'summary', keyword: match[2]?.trim() || null };
+  if (match) {
+    if (freeformEnabled && match[2] && /\s|[，,。！？!?：:]|請|幫我|詳細|簡短|改成|寫成|列出|條列|表格/u.test(match[2])) {
+      return { kind: 'assist', keyword: null };
+    }
+    return { kind: match[1].includes('待辦') ? 'todos' : 'summary', keyword: match[2]?.trim() || null };
+  }
+  if (freeformEnabled && value) return { kind: 'assist', keyword: null };
+  if (!value) return { kind: 'help', keyword: null };
   return { kind: 'unsupported', keyword: null };
 }
 
@@ -55,11 +62,14 @@ export function assistantJobForEvent(event, config, now = Date.now()) {
   const token = event.replyToken;
   if (typeof token !== 'string' || token.length > 512 || !token.length || /[\s\x00-\x1f\x7f]/u.test(token)) return null;
   if (!Number.isSafeInteger(event.timestamp) || event.timestamp < now - 19 * 60000 || event.timestamp > now + 120000) return null;
-  const command = text.length > 500 ? { kind: 'unsupported', keyword: null } : parseCommand(text.slice(index + length));
+  const maximum = assistant.freeformEnabled ? 8000 : 500;
+  const command = text.length > maximum ? { kind: 'unsupported', keyword: null }
+    : parseCommand(text.slice(index + length), assistant);
   const range = taipeiDay(event.timestamp);
   const quota = taipeiDay(now);
   return {
     ...command,
+    ...(command.kind === 'assist' ? { requestOffset: index + length } : {}),
     operatorUserId: assistant.operatorUserId,
     sourceDigest: createHash('sha256').update(text).digest('hex'),
     rangeStart: range.start, rangeEnd: range.end,
@@ -71,3 +81,9 @@ export function assistantJobForEvent(event, config, now = Date.now()) {
 }
 
 export const HELP_TEXT = '綺綺 KIKI｜智慧秘書\n請先從群組成員清單真正 @KIKI，再輸入：\n• 幫助\n• 狀態\n• 今日摘要\n• 今日待辦\n也可加關鍵字，例如：今日摘要 OSCE。\n摘要使用臺北時間今日、目前仍保存的訊息，結果會回到這個群組。';
+
+export function helpText(config) {
+  return HELP_TEXT + (config.assistant?.freeformEnabled
+    ? '\n\n也可以直接交辦：\n• 解釋什麼是 SMART 目標\n• 把今天討論整理成會議紀錄\n• 將下面文字改成正式公告：……\n每次標記獨立處理；修改草稿時請附上原文。\n只讀本群今日訊息，不執行寄信、排會議或其他系統操作。'
+    : '');
+}

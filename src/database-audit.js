@@ -1,8 +1,9 @@
 const BASE_TABLES = ['messages', 'webhook_events', 'message_state'];
 
-export async function auditDatabase(db, { assistantEnabled = false } = {}) {
+export async function auditDatabase(db, { assistantEnabled = false, freeformEnabled = false } = {}) {
   const TABLES = assistantEnabled ? [...BASE_TABLES, 'assistant_jobs'] : BASE_TABLES;
   const issues = [];
+  if (freeformEnabled && !assistantEnabled) issues.push('freeform_requires_assistant');
   const { rows: [role] } = await db.query(`SELECT current_user AS name,
     rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls, rolinherit, rolcanlogin
     FROM pg_catalog.pg_roles WHERE rolname = current_user`);
@@ -42,6 +43,7 @@ export async function auditDatabase(db, { assistantEnabled = false } = {}) {
     source_digest,kind,keyword,notice_reason,range_start,range_end,created_at,expires_at,status,
     encrypted_reply_token,attempt_count,started_at,finished_at,error_code,message_count,input_truncated,
     input_tokens,output_tokens FROM linebot.assistant_jobs WHERE false`);
+  if (freeformEnabled) await db.query('SELECT request_offset FROM linebot.assistant_jobs WHERE false');
 
   // PUBLIC grants and column grants still count even with NOINHERIT.
   // Catalog metadata only; this does not query any other application's rows.

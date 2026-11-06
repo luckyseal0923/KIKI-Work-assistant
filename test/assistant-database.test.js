@@ -11,6 +11,7 @@ import { auditDatabase } from '../src/database-audit.js';
 import { decryptReplyToken } from '../src/assistant-command.js';
 import { AssistantWorker } from '../src/assistant-worker.js';
 import { OpenAISummarizer, LineReplier } from '../src/assistant-clients.js';
+import { OpenAIDialogue } from '../src/assistant-dialogue.js';
 
 const owner = `U${'2'.repeat(32)}`, secret = 'synthetic-assistant-database-secret';
 let seq = 0;
@@ -185,5 +186,68 @@ test('assistant database integration: durable jobs, quota, retraction, source ch
       await assert.rejects(db.query('SELECT encrypted_reply_token FROM linebot.assistant_jobs'), /permission denied/);
     }
     await db.exec('RESET ROLE; SET ROLE linebot_app');
+  });
+
+  await t.test('freeform stays gated until migration 004; the upgrade is repeatable without new role privileges', async () => {
+    await assert.rejects(auditDatabase(db,{assistantEnabled:true,freeformEnabled:true}),/request_offset|column/);
+    await db.exec('RESET ROLE');
+    const migration=await readFile(new URL('../migrations/004_freeform_assistant.sql',import.meta.url),'utf8');
+    await db.exec(migration); await db.exec(migration);
+    await db.exec('SET ROLE linebot_app; SET search_path=pg_catalog');
+    const audit=await auditDatabase(db,{assistantEnabled:true,freeformEnabled:true});
+    assert.equal(audit.ok,true); assert.deepEqual(audit.memberships,[]); assert.deepEqual(audit.writableSchemas,[]);
+  });
+
+  await t.test('freeform reads the authenticated request at its UTF-16 offset and editing cancels it', async () => {
+    const c=configFor('b'); c.assistant.freeformEnabled=true;
+    const q=new AssistantStore(pool,c), request='請把以下合成文字改成公告：合成課程明天下午兩點開始。';
+    const mention='@🧪KIKI';
+    const raw=textEvent(c,mention+' '+request,{command:true});
+    raw.message.mention.mentionees[0].length=mention.length;
+    await archive.save(selected(c,raw)); const job=await q.claim();
+    assert.equal(job.kind,'assist'); assert.equal(job.request_offset,mention.length);
+    assert.equal(await q.readRequest(job),request);
+    assert.equal(Object.values(job).some(v=>typeof v==='string'&&v.includes(request)),false);
+    await archive.save(selected(c,{...raw,type:'messageEdited',timestamp:Date.now()+1,
+      webhookEventId:`synthetic-free-edit-${++seq}`,message:{...raw.message,text:'合成：取消改寫'}}));
+    assert.equal(await q.readRequest(job),null);
+    assert.equal((await jobRows(raw.message.id))[0].encrypted_reply_token,null);
+    assert.equal((await jobRows(raw.message.id))[0].status,'canceled');
+  });
+
+  await t.test('freeform and fixed summaries share the same durable daily limit and status count', async () => {
+    const c=configFor('c'); c.assistant.freeformEnabled=true; c.assistant.dailyLimit=1;
+    const q=new AssistantStore(pool,c);
+    await archive.save(selected(c,textEvent(c,'@KIKI 什麼是合成測試？',{command:true})));
+    const first=await q.claim(); assert.equal(first.kind,'assist'); await q.finish(first,'sent');
+    assert.equal((await q.status(first)).used,1);
+    await archive.save(selected(c,textEvent(c,'@KIKI 今日摘要',{command:true})));
+    const limited=await q.claim(); assert.equal(limited.kind,'rate_limited');
+    assert.equal(limited.notice_reason,'daily_limit'); assert.equal(limited.request_offset,null);
+    await q.finish(limited,'sent');
+  });
+
+  await t.test('real durable freeform pipeline uses two bounded mocked API calls, no history, one LINE reply and no replay', async () => {
+    const c=configFor('d'); c.assistant.freeformEnabled=true;
+    const q=new AssistantStore(pool,c), requests=[];
+    q.readMessages=async()=>{throw new Error('stand-alone draft must not read group history');};
+    const raw=textEvent(c,'@KIKI 請改寫這段合成公告：合成課程明天下午兩點開始。',{command:true});
+    await archive.save(selected(c,raw));
+    const worker=new AssistantWorker({config:c,store:q,dialogue:new OpenAIDialogue(c.assistant,{fetchImpl:async(url,options)=>{
+      const body=JSON.parse(options.body); requests.push({url,body});
+      const value=body.text.format.name==='kiki_request_plan'
+        ?{mode:'draft',keyword:null,clarification:null}
+        :{title:'合成公告草稿',blocks:[{text:'合成課程將於明日下午兩點開始，敬請準時參與。',refs:[]}]};
+      return new Response(JSON.stringify({status:'completed',output:[{type:'message',role:'assistant',
+        content:[{type:'output_text',text:JSON.stringify(value)}]}],usage:{input_tokens:10,output_tokens:5}}));
+    }}),replier:new LineReplier('synthetic-line-token',{fetchImpl:async(url,options)=>{
+      requests.push({url,body:JSON.parse(options.body)}); return new Response('{}');
+    }})});
+    await worker.drain(); const [job]=await jobRows(raw.message.id);
+    assert.equal(job.status,'sent'); assert.equal(job.attempt_count,1); assert.equal(job.encrypted_reply_token,null);
+    assert.equal(job.message_count,0); assert.equal(job.input_tokens,20); assert.equal(job.output_tokens,10);
+    assert.equal(requests.length,3); assert.match(requests[2].body.messages[0].text,/公告草稿/);
+    assert.deepEqual(JSON.parse(requests[1].body.input[0].content[0].text).messages,[]);
+    await archive.save(selected(c,raw)); await worker.drain(); assert.equal(requests.length,3);
   });
 });

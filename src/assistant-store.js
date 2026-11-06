@@ -6,21 +6,24 @@ export async function enqueueAssistantJob(client, event) {
   // Serialize only this application's group budget within the archive transaction.
   await client.query("SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext('kiki_assistant_v1'),pg_catalog.hashtext($1))", [event.groupId]);
   let kind = job.kind, reason = null;
-  if (['summary', 'todos'].includes(kind)) {
+  if (['summary', 'todos', 'assist'].includes(kind)) {
     const { rows: [budget] } = await client.query(`SELECT count(*)::integer AS used,
         coalesce(bool_or(created_at > $4::timestamptz - ($5::integer * interval '1 second')),false) AS cooling
       FROM linebot.assistant_jobs WHERE group_id=$1 AND created_at >= $2 AND created_at < $3
-        AND kind IN ('summary','todos')`,
+        AND kind IN ('summary','todos','assist')`,
     [event.groupId, job.quotaStart, job.quotaEnd, job.createdAt, job.cooldownSeconds]);
     if (budget.used >= job.dailyLimit) { kind = 'rate_limited'; reason = 'daily_limit'; }
     else if (budget.cooling) { kind = 'rate_limited'; reason = 'cooldown'; }
   }
+  // Keep fixed commands deployable against migration 003 while freeform is off.
+  const extended = kind === 'assist';
   await client.query(`INSERT INTO linebot.assistant_jobs
     (event_id,source_message_id,group_id,operator_user_id,source_digest,kind,keyword,notice_reason,
-     range_start,range_end,created_at,expires_at,encrypted_reply_token)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) ON CONFLICT DO NOTHING`,
+     range_start,range_end,created_at,expires_at,encrypted_reply_token${extended ? ',request_offset' : ''})
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13${extended ? ',$14' : ''}) ON CONFLICT DO NOTHING`,
   [event.eventId, event.messageId, event.groupId, job.operatorUserId, job.sourceDigest,
-    kind, job.keyword, reason, job.rangeStart, job.rangeEnd, job.createdAt, job.expiresAt, job.encryptedReplyToken]);
+    kind, job.keyword, reason, job.rangeStart, job.rangeEnd, job.createdAt, job.expiresAt, job.encryptedReplyToken,
+    ...(extended ? [job.requestOffset] : [])]);
 }
 
 export async function cancelAssistantJobs(client, messageId, groupId) {
@@ -52,6 +55,7 @@ export class AssistantStore {
   }
 
   async current(job) {
+    if (job.kind === 'assist' && !this.config.assistant.freeformEnabled) return false;
     if (job.group_id !== this.config.allowedGroupId || job.operator_user_id !== this.config.assistant.operatorUserId) return false;
     const { rows } = await this.pool.query(`SELECT m.message_text
       FROM linebot.assistant_jobs j JOIN linebot.messages m
@@ -60,6 +64,18 @@ export class AssistantStore {
       WHERE j.event_id=$1 AND j.status='processing' AND j.expires_at > clock_timestamp()
         AND s.unsent_at IS NULL`, [job.event_id]);
     return rows.length === 1 && createHash('sha256').update(rows[0].message_text).digest('hex') === job.source_digest;
+  }
+
+  async readRequest(job) {
+    if (job.kind !== 'assist' || !Number.isInteger(job.request_offset) || job.request_offset < 1 ||
+        job.request_offset > 8000 || !await this.current(job)) return null;
+    const { rows } = await this.pool.query(`SELECT m.message_text FROM linebot.messages m
+      JOIN linebot.message_state s ON s.message_id=m.message_id AND s.group_id=m.group_id
+      WHERE m.message_id=$1 AND m.group_id=$2 AND s.unsent_at IS NULL`, [job.source_message_id, job.group_id]);
+    const text = rows[0]?.message_text;
+    if (typeof text !== 'string' || text.length > 8000 || job.request_offset >= text.length ||
+        createHash('sha256').update(text).digest('hex') !== job.source_digest) return null;
+    return text.slice(job.request_offset).trim() || null;
   }
 
   async readMessages(job) {
@@ -114,7 +130,7 @@ export class AssistantStore {
       (SELECT count(*)::integer FROM linebot.messages WHERE group_id=$1
         AND coalesce(sent_at,received_at) >= $2 AND coalesce(sent_at,received_at) < $3) AS messages,
       (SELECT count(*)::integer FROM linebot.assistant_jobs WHERE group_id=$1
-        AND created_at >= $2 AND created_at < $3 AND kind IN ('summary','todos')) AS used`,
+        AND created_at >= $2 AND created_at < $3 AND kind IN ('summary','todos','assist')) AS used`,
     [job.group_id, day.start, day.end]);
     return { ...row, day: day.day, dailyLimit: this.config.assistant.dailyLimit };
   }

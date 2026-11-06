@@ -11,6 +11,34 @@ function requestSignal(signal, timeout) {
   return signal ? AbortSignal.any([signal, AbortSignal.timeout(timeout)]) : AbortSignal.timeout(timeout);
 }
 
+// Shared fixed-endpoint transport; never logs a request, response body or credential.
+export async function requestModelJson(config, body, { fetchImpl = fetch, signal, timeout = 20000 } = {}) {
+  let response;
+  try {
+    response = await fetchImpl(OPENAI_URL, { method: 'POST', headers: {
+      Authorization: `Bearer ${config.openaiApiKey}`, 'Content-Type': 'application/json',
+    }, body: JSON.stringify(body), signal: requestSignal(signal, timeout) });
+  } catch { throw new AssistantError('ai_request_failed'); }
+  if (!response.ok) { await response.body?.cancel(); throw new AssistantError(response.status === 429 ? 'ai_rate_limited' : 'ai_request_failed'); }
+  let result;
+  try { result = await response.json(); } catch { throw new AssistantError('invalid_ai_output'); }
+  if (result.status !== 'completed') throw new AssistantError('ai_incomplete');
+  const parts = [];
+  for (const item of result.output || []) {
+    if (item.type === 'reasoning') continue;
+    if (item.type !== 'message' || item.role !== 'assistant') throw new AssistantError('invalid_ai_output');
+    for (const content of item.content || []) {
+      if (content.type === 'refusal') throw new AssistantError('ai_refused');
+      if (content.type !== 'output_text' || typeof content.text !== 'string') throw new AssistantError('invalid_ai_output');
+      parts.push(content.text);
+    }
+  }
+  let value;
+  try { value = JSON.parse(parts.join('')); } catch { throw new AssistantError('invalid_ai_output'); }
+  const tokenCount = n => Number.isSafeInteger(n) && n >= 0 && n < 10000000 ? n : null;
+  return { value, inputTokens: tokenCount(result.usage?.input_tokens), outputTokens: tokenCount(result.usage?.output_tokens) };
+}
+
 function schemaFor(refs) {
   const evidence = { type: 'array', items: { type: 'string', enum: refs } };
   const item = { type: 'object', additionalProperties: false,
@@ -81,31 +109,8 @@ export class OpenAISummarizer {
       text: { format: { type: 'json_schema', name: 'kiki_daily_summary', strict: true,
         schema: schemaFor(snapshot.messages.map(m => m.ref)) } },
     };
-    let response;
-    try {
-      response = await this.fetch(OPENAI_URL, { method: 'POST', headers: {
-        Authorization: `Bearer ${this.config.openaiApiKey}`, 'Content-Type': 'application/json',
-      }, body: JSON.stringify(body), signal: requestSignal(signal, timeout) });
-    } catch { throw new AssistantError('ai_request_failed'); }
-    if (!response.ok) { await response.body?.cancel(); throw new AssistantError(response.status === 429 ? 'ai_rate_limited' : 'ai_request_failed'); }
-    let result;
-    try { result = await response.json(); } catch { throw new AssistantError('invalid_ai_output'); }
-    if (result.status !== 'completed') throw new AssistantError('ai_incomplete');
-    const parts = [];
-    for (const item of result.output || []) {
-      if (item.type === 'reasoning') continue;
-      if (item.type !== 'message' || item.role !== 'assistant') throw new AssistantError('invalid_ai_output');
-      for (const content of item.content || []) {
-        if (content.type === 'refusal') throw new AssistantError('ai_refused');
-        if (content.type !== 'output_text' || typeof content.text !== 'string') throw new AssistantError('invalid_ai_output');
-        parts.push(content.text);
-      }
-    }
-    let parsed;
-    try { parsed = JSON.parse(parts.join('')); } catch { throw new AssistantError('invalid_ai_output'); }
-    const summary = validateSummary(parsed, snapshot.messages);
-    const tokenCount = value => Number.isSafeInteger(value) && value >= 0 && value < 10000000 ? value : null;
-    return { ...summary, inputTokens: tokenCount(result.usage?.input_tokens), outputTokens: tokenCount(result.usage?.output_tokens) };
+    const result = await requestModelJson(this.config, body, { fetchImpl: this.fetch, signal, timeout });
+    return { ...validateSummary(result.value, snapshot.messages), inputTokens: result.inputTokens, outputTokens: result.outputTokens };
   }
 }
 

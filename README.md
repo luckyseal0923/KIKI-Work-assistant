@@ -4,6 +4,8 @@ Your Intelligent Work Assistant
 
 第一階段：LINE 單群文字收訊端。第二階段：管理者標記 KIKI 後的今日摘要與待辦（預設關閉）。
 
+第三階段新增「自由提問、群組內容整理、文字草擬」，保留四個快捷指令。使用既有金鑰、管理者與原測試群；需完成遷移 004、稽核並開啟 `ASSISTANT_FREEFORM_ENABLED`。一般提問與附文改寫不讀群組歷史，明確要求群組整理才讀取本群今日的限量訊息。設定、範例與限制見 [自然語言交辦說明](docs/FREEFORM_ASSISTANT.md)。
+
 將一個明確允許的測試群文字，經 LINE 原始本文簽章驗證後，寫入你已建立的共用自架 Supabase `linebot` 區域。部署目標為 Coolify，使用受限的 PostgreSQL 帳號直接連線。
 
 **2026-11-06 已通過原允許測試群的實際 LINE 入庫與收回驗收。** 使用者在 LINE 傳送合成文字後，Supabase 精確匹配 1 則；收回同一則後，文字列為 0、撤回紀錄為 1。KIKI 維持 `record`，私網、受限帳號、`db:check` 與 HTTPS 健康／就緒檢查皆已通過。共享 ACL 調整保留其他 26 個角色的有效權限；專用角色總連線上限 4。詳細證據與尚未驗證範圍見 [第一階段驗收紀錄](docs/PHASE1_ACCEPTANCE.md)。
