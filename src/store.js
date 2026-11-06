@@ -1,4 +1,4 @@
-import { enqueueAssistantJob, cancelAssistantJobs } from './assistant-store.js';
+import { enqueueAssistantJob, cancelAssistantJobs,budgetKey,lockAssistantBudget } from './assistant-store.js';
 
 // Every query that includes webhook values uses PostgreSQL parameters.
 // message_state is both a per-message row lock and a permanent unsend tombstone.
@@ -35,6 +35,14 @@ export const SQL = {
 };
 
 export async function persistEvents(client, events, { assistantEnabled = false } = {}) {
+  // Lock every budget before any message state: overlapping multi-group batches
+  // must not hold a message row while waiting for another batch's shared quota.
+  if(assistantEnabled)for(const key of [...new Set(events.filter(e=>e.assistantJob).map(budgetKey))].sort())await lockAssistantBudget(client,key);
+  const fences=new Map(events.filter(e=>e.groupVersion).map(e=>[e.groupId,e.groupVersion]));
+  for(const [groupId,version] of [...fences].sort(([a],[b])=>a.localeCompare(b))){
+    const {rows}=await client.query('SELECT 1 FROM linebot.group_settings WHERE group_id=$1 AND version=$2 AND enabled FOR SHARE',[groupId,version]);
+    if(rows.length!==1)throw new Error('Group settings changed');
+  }
   // Consistent lock order prevents deadlocks between multi-event deliveries.
   const freshIds = new Set();
   for (const eventId of [...new Set(events.map(e => e.eventId))].sort()) {
@@ -42,9 +50,15 @@ export async function persistEvents(client, events, { assistantEnabled = false }
   }
   let processed = 0;
   const ordered = [...events].sort((a, b) =>
-    a.messageId.localeCompare(b.messageId, 'en') || a.eventId.localeCompare(b.eventId, 'en'));
+    (a.messageId||a.eventId).localeCompare(b.messageId||b.eventId, 'en') || a.eventId.localeCompare(b.eventId, 'en'));
   for (const event of ordered) {
     if (!freshIds.delete(event.eventId)) continue;
+    if(event.kind==='postback'){
+      if(!assistantEnabled||!event.assistantJob)continue;
+      await client.query('INSERT INTO linebot.assistant_actions(event_id,group_id,operator_user_id,command) VALUES($1,$2,$3,$4)',
+        [event.eventId,event.groupId,event.userId,event.assistantJob.command]);
+      await enqueueAssistantJob(client,event);processed++;continue;
+    }
     const state = await client.query(SQL.state, [
       event.messageId, event.groupId, event.kind === 'unsend' ? event.at : null,
     ]);

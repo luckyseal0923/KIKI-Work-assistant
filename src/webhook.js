@@ -1,6 +1,7 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { GROUP_ID } from './config.js';
-import { assistantJobForEvent } from './assistant-command.js';
+import { assistantJobForEvent,assistantJobForAction } from './assistant-command.js';
+import {workspaceControl} from './work-actions.js';
 
 export class HttpError extends Error {
   constructor(status) { super('Request rejected'); this.status = status; }
@@ -42,7 +43,17 @@ export function selectEvents(raw, config) {
       if (['join', 'message', 'messageEdited', 'unsend'].includes(event.type)) candidates.add(source.groupId);
       continue;
     }
-    if (source.groupId !== config.allowedGroupId) continue;
+    const scoped=config.groupContexts?.get(source.groupId)||config;
+    if (source.groupId !== scoped.allowedGroupId) continue;
+    if(event.type==='postback'){
+      const assistantJob=assistantJobForAction(event,scoped);
+      const control=assistantJob&&workspaceControl(assistantJob.command);
+      if(scoped.enrollmentOnly&&(!control||!['confirm','discard'].includes(control.action)||!scoped.enrollmentProposalCodes?.has(control.code)))continue;
+      if(assistantJob)events.push({kind:'postback',eventId:id(event.webhookEventId),groupId:source.groupId,
+        at:timestamp(event.timestamp),userId:id(source.userId),assistantJob,
+        ...(!scoped.enrollmentOnly&&assistantJob.keyword!=='group_control'?{groupVersion:scoped.groupVersion}: {})});
+      continue;
+    }
     if (!['message', 'messageEdited', 'unsend'].includes(event.type)) continue;
     if (event.type !== 'unsend' && event.message?.type !== 'text') continue;
     const base = {
@@ -50,15 +61,25 @@ export function selectEvents(raw, config) {
       eventId: id(event.webhookEventId),
       groupId: source.groupId,
       at: timestamp(event.timestamp),
+      ...(!scoped.enrollmentOnly&&scoped.groupVersion?{groupVersion:scoped.groupVersion}: {}),
     };
     if (event.type === 'unsend') {
+      if(scoped.enrollmentOnly&&!scoped.enrollmentMessageIds?.has(event.unsend?.messageId))continue;
       events.push({ ...base, messageId: id(event.unsend?.messageId) });
     } else {
       const message = event.message;
       if (typeof message.text !== 'string' || message.text.includes('\0') || message.text.length > 100000) {
         throw new HttpError(400);
       }
-      const assistantJob = assistantJobForEvent(event, config);
+      const assistantJob = assistantJobForEvent(event, scoped);
+      if(scoped.enrollmentOnly){
+        const knownEdit=event.type==='messageEdited'&&scoped.enrollmentMessageIds?.has(message.id);
+        if(!knownEdit&&(!assistantJob||!['group_enroll','group_control'].includes(assistantJob.keyword)
+          &&!(scoped.enrollmentProposalCodes?.has(workspaceControl(message.text.slice(assistantJob.requestOffset))?.code))))continue;
+        if(assistantJob&&assistantJob.keyword===null)assistantJob.keyword='group_control';
+      }else if(assistantJob&&['confirm','discard'].includes(workspaceControl(message.text.slice(assistantJob.requestOffset||0))?.action)
+        &&scoped.enrollmentProposalCodes?.has(workspaceControl(message.text.slice(assistantJob.requestOffset||0)).code))assistantJob.keyword='group_control';
+      if(assistantJob&&['group_enroll','group_control'].includes(assistantJob.keyword))delete base.groupVersion;
       events.push({
         ...base,
         messageId: id(message.id),

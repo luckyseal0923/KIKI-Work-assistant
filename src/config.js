@@ -41,6 +41,12 @@ export function assistantConfig(env, mode) {
   const freeformEnabled = env.ASSISTANT_FREEFORM_ENABLED === 'true';
   if(env.ASSISTANT_WORKSPACE_ENABLED!==undefined&&!['true','false',''].includes(env.ASSISTANT_WORKSPACE_ENABLED))throw new ConfigError('ASSISTANT_WORKSPACE_ENABLED');
   const workspaceEnabled=env.ASSISTANT_WORKSPACE_ENABLED==='true';
+  if(env.ASSISTANT_ORGANIZER_ENABLED!==undefined&&!['true','false',''].includes(env.ASSISTANT_ORGANIZER_ENABLED))throw new ConfigError('ASSISTANT_ORGANIZER_ENABLED');
+  const organizerEnabled=env.ASSISTANT_ORGANIZER_ENABLED==='true';
+  if(env.ASSISTANT_MULTI_GROUP_ENABLED!==undefined&&!['true','false',''].includes(env.ASSISTANT_MULTI_GROUP_ENABLED))throw new ConfigError('ASSISTANT_MULTI_GROUP_ENABLED');
+  const multiGroupEnabled=env.ASSISTANT_MULTI_GROUP_ENABLED==='true';
+  if(multiGroupEnabled&&!organizerEnabled)throw new ConfigError('ASSISTANT_MULTI_GROUP_ENABLED');
+  if(organizerEnabled&&!workspaceEnabled)throw new ConfigError('ASSISTANT_ORGANIZER_ENABLED');
   if(workspaceEnabled&&(!freeformEnabled||env.ASSISTANT_ENABLED!=='true'))throw new ConfigError('ASSISTANT_WORKSPACE_ENABLED');
   if (env.ASSISTANT_ENABLED !== 'true') {
     if (freeformEnabled) throw new ConfigError('ASSISTANT_FREEFORM_ENABLED');
@@ -52,7 +58,7 @@ export function assistantConfig(env, mode) {
   const model = env.OPENAI_MODEL || 'gpt-6-luna';
   if (!['gpt-6-luna', 'gpt-6.1-sol', 'gpt-6-astra'].includes(model)) throw new ConfigError('OPENAI_MODEL');
   return {
-    enabled: true, freeformEnabled, workspaceEnabled, operatorUserId, model,
+    enabled: true, freeformEnabled, workspaceEnabled, organizerEnabled,multiGroupEnabled,maxGroups:boundedInteger(env,'ASSISTANT_MAX_GROUPS',3,2,10), operatorUserId, model,
     contextMessages:boundedInteger(env,'ASSISTANT_CONTEXT_MESSAGES',20,5,50),
     contextCharacters:boundedInteger(env,'ASSISTANT_CONTEXT_CHARACTERS',12000,2000,22000),
     openaiApiKey: required(env, 'OPENAI_API_KEY'),

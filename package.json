@@ -11,7 +11,7 @@
   "scripts": {
     "start": "node src/main.js",
     "start:local": "node --env-file=.env src/main.js",
-    "test": "node --test --test-concurrency=1",
+    "test": "node --test --test-concurrency=1 test",
     "db:check": "node scripts/check-database.js",
     "db:check:local": "node --env-file=.env scripts/check-database.js"
   },

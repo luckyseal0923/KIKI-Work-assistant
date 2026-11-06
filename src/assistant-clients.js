@@ -117,12 +117,13 @@ export class OpenAISummarizer {
 export class LineReplier {
   constructor(accessToken, { fetchImpl = fetch } = {}) { this.token = accessToken; this.fetch = fetchImpl; }
   async reply(replyToken, text, { signal, timeout = 6000 } = {}) {
-    if (typeof text !== 'string' || !text.trim() || text.length > 4500) throw new AssistantError('invalid_reply');
+    const message=typeof text==='string'?{type:'text',text}:text;
+    if(typeof text==='string'?(!text.trim()||text.length>4500):!message||message.type!=='flex'||typeof message.altText!=='string'||!message.altText||message.altText.length>1500||JSON.stringify(message).length>25000)throw new AssistantError('invalid_reply');
     let response;
     try {
       response = await this.fetch(LINE_URL, { method: 'POST', headers: {
         Authorization: `Bearer ${this.token}`, 'Content-Type': 'application/json',
-      }, body: JSON.stringify({ replyToken, messages: [{ type: 'text', text }] }), signal: requestSignal(signal, timeout) });
+      }, body: JSON.stringify({ replyToken, messages: [message] }), signal: requestSignal(signal, timeout) });
     } catch { throw new AssistantError('line_reply_failed'); }
     await response.body?.cancel();
     if (!response.ok) throw new AssistantError('line_reply_failed');

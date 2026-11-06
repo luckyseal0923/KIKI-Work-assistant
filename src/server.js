@@ -44,7 +44,7 @@ function respond(res, status, ok) {
   res.end(JSON.stringify({ ok }));
 }
 
-export function createServer({ config, store, assistantWorker = null, log = () => {} }) {
+export function createServer({ config, store, assistantWorker = null,groups=null, log = () => {} }) {
   let active = 0;
   let readiness = null;
   let readyUntil = 0;
@@ -71,7 +71,8 @@ export function createServer({ config, store, assistantWorker = null, log = () =
       if (encoding && encoding !== 'identity') throw new HttpError(415);
       const raw = await readBody(req);
       if (!validSignature(raw, req.headers['x-line-signature'], config.secret)) throw new HttpError(401);
-      const { events, candidates } = selectEvents(raw, config);
+      const routed=groups?await groups.forWebhook(raw):config;
+      const { events, candidates } = selectEvents(raw, routed);
       for (const groupId of candidates) {
         if (discovered.size < 20 && !discovered.has(groupId)) {
           discovered.add(groupId);

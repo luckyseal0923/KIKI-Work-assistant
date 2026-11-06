@@ -1,4 +1,6 @@
 import { taipeiDay } from './assistant-command.js';
+import {topicControl,describeTopic} from './topic-actions.js';
+import {groupControl,describeGroup} from './group-actions.js';
 
 export const WORK_CODE=/^W[0-9A-F]{8}$/u;
 export const PROPOSAL_CODE=/^P[0-9A-F]{8}$/u;
@@ -18,6 +20,10 @@ export function directWorkPlan(request){
 
 export function workspaceControl(request) {
   const text=normalizeRequest(request).replace(/[。！!？?]+$/u,'').trim();
+  const topic=topicControl(text);if(topic)return topic;
+  const group=groupControl(text);if(group)return group;
+  const state=/^(完成工作|取消工作)\s+(W[0-9A-F]{8})\s+(\d+)$/iu.exec(text);
+  if(state)return {action:'work_state',code:state[2].toUpperCase(),version:Number(state[3]),status:state[1]==='完成工作'?'done':'canceled'};
   if(/^(工作清單|我的待辦|有哪些未完成的?工作|有哪些工作未完成|還有哪些(?:工作|待辦)(?:沒完成|未完成))$/u.test(text))return {action:'list'};
   if(text==='待確認提案')return {action:'pending'};
   if(/^(重置對話|清除對話記憶)$/u.test(text))return {action:'reset'};
@@ -148,11 +154,24 @@ export function describeWork(item) {
 }
 
 export function renderProposal(proposal) {
-  const lines=[`綺綺 KIKI｜待確認工作提案 ${proposal.code}`,'以下尚未寫入正式工作紀錄：'];
+  const setting=proposal.actions.some(a=>['topic_define','group_config'].includes(a.operation));
+  const lines=[`綺綺 KIKI｜待確認${setting?'設定':'工作'}提案 ${proposal.code}`,setting?'以下設定尚未套用：':'以下尚未寫入正式工作紀錄：'];
   for(const [i,a] of proposal.actions.entries()){
+    if(a.operation==='group_config'){
+      lines.push('',a.body.enabled?'啟用本群':'停用本群',...(a.previous_body?['變更前：',describeGroup({code:a.target,...a.previous_body}),'變更後：']:[]),
+        describeGroup({code:a.target,...a.body}),a.body.enabled?'確認後才開始保存本群新文字。只有既定管理者可操作；整理要求會將限量本群文字送至既有 OpenAI，結果回到本群。各群的訊息、工作、主題與記憶分開。':'確認後停止本群新收錄與一般指令；既有保存資料保留，不會刪除。',
+        '每日 20 次 AI 要求由所有已啟用群共用；不補讀加入前的 LINE 聊天。');continue;
+    }
+    if(a.operation==='topic_define'){
+      lines.push('',`${i+1}. ${a.rebuild?'重建失效主題的完整定義':a.target?'更新主題別名':'建立主題關聯'}`,
+        ...(a.rebuild?['舊定義來源已變更，不再引用；以下依你本次明示的完整內容重新確認。']:[]),
+        ...(a.previous_body?['變更前：',describeTopic({code:a.target,definition:a.previous_body}),'變更後：']:[]),
+        describeTopic({code:a.target,definition:a.body}),'這些別名只在本群查找與工作關聯使用，不會改寫原始訊息。');continue;
+    }
     lines.push('',`${i+1}. ${a.operation==='create'?'新增':'更新'}${a.operation==='update'?`（目前版本 ${a.expected_version}）`:''}`,
       ...(a.previous_body?['變更前：',describeWork({code:a.target,body:a.previous_body}),'變更後：']:[]),
       describeWork({code:a.target||'確認後產生代碼',body:a.body}));
+    if(a.topic_ref)lines.push(`關聯主題：${a.topic_ref.code}（版本 ${a.topic_ref.version}）`);
   }
   lines.push('',`10 分鐘內，請真正 @KIKI 輸入「確認 ${proposal.code}」或「取消提案 ${proposal.code}」。`,'確認前若原訊息或目標紀錄改變，提案會停止套用。');
   const result=lines.join('\n');if(result.length>4300)throw new Error('work_preview_too_long');return result;

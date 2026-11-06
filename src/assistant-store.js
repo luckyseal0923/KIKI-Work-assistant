@@ -3,29 +3,35 @@ import { taipeiDay } from './assistant-command.js';
 import { eventDatePattern } from './assistant-scope.js';
 import {speakerLabel,selectThreadRows} from './assistant-threads.js';
 
+export const budgetKey=event=>event.assistantJob.quotaScope==='shared'?'shared-budget':event.groupId;
+export async function lockAssistantBudget(client,key){
+  await client.query("SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext('kiki_assistant_v1'),pg_catalog.hashtext($1))",[key]);
+}
 export async function enqueueAssistantJob(client, event) {
   const job = event.assistantJob;
-  // Serialize only this application's group budget within the archive transaction.
-  await client.query("SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext('kiki_assistant_v1'),pg_catalog.hashtext($1))", [event.groupId]);
+  // persistEvents acquires budget locks before message locks for the entire batch.
+  const shared=job.quotaScope==='shared';
+  await lockAssistantBudget(client,budgetKey(event));
   let kind = job.kind, reason = null;
   if (['summary', 'todos', 'assist'].includes(kind)) {
     const { rows: [budget] } = await client.query(`SELECT count(*)::integer AS used,
         coalesce(bool_or(created_at > $4::timestamptz - ($5::integer * interval '1 second')),false) AS cooling
-      FROM linebot.assistant_jobs WHERE group_id=$1 AND created_at >= $2 AND created_at < $3
+      FROM linebot.assistant_jobs WHERE ($1::text IS NULL OR group_id=$1) AND created_at >= $2 AND created_at < $3
         AND kind IN ('summary','todos','assist')`,
-    [event.groupId, job.quotaStart, job.quotaEnd, job.createdAt, job.cooldownSeconds]);
+    [shared?null:event.groupId, job.quotaStart, job.quotaEnd, job.createdAt, job.cooldownSeconds]);
     if (budget.used >= job.dailyLimit) { kind = 'rate_limited'; reason = 'daily_limit'; }
     else if (budget.cooling) { kind = 'rate_limited'; reason = 'cooldown'; }
   }
   // Keep fixed commands deployable against migration 003 while freeform is off.
   const extended = ['assist','workspace'].includes(kind);
+  const action=job.sourceKind==='action';
   await client.query(`INSERT INTO linebot.assistant_jobs
     (event_id,source_message_id,group_id,operator_user_id,source_digest,kind,keyword,notice_reason,
-     range_start,range_end,created_at,expires_at,encrypted_reply_token${extended ? ',request_offset' : ''})
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13${extended ? ',$14' : ''}) ON CONFLICT DO NOTHING`,
-  [event.eventId, event.messageId, event.groupId, job.operatorUserId, job.sourceDigest,
+     range_start,range_end,created_at,expires_at,encrypted_reply_token${extended ? ',request_offset' : ''}${action?',source_kind,source_action_id':''})
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13${extended ? ',$14' : ''}${action?",'action',$15":''}) ON CONFLICT DO NOTHING`,
+  [event.eventId, action?null:event.messageId, event.groupId, job.operatorUserId, job.sourceDigest,
     kind, job.keyword, reason, job.rangeStart, job.rangeEnd, job.createdAt, job.expiresAt, job.encryptedReplyToken,
-    ...(extended ? [job.requestOffset] : [])]);
+    ...(extended ? [job.requestOffset] : []),...(action?[event.eventId]:[])]);
 }
 
 export async function cancelAssistantJobs(client, messageId, groupId) {
@@ -60,6 +66,13 @@ export class AssistantStore {
     if (job.kind === 'assist' && !this.config.assistant.freeformEnabled) return false;
     if(job.kind==='workspace'&&!this.config.assistant.workspaceEnabled)return false;
     if (job.group_id !== this.config.allowedGroupId || job.operator_user_id !== this.config.assistant.operatorUserId) return false;
+    if(job.source_kind==='action'){
+      if(!this.config.assistant.organizerEnabled||job.kind!=='workspace')return false;
+      const {rows}=await this.pool.query(`SELECT a.command FROM linebot.assistant_jobs j JOIN linebot.assistant_actions a
+        ON a.event_id=j.source_action_id AND a.group_id=j.group_id AND a.operator_user_id=j.operator_user_id
+        WHERE j.event_id=$1 AND j.status='processing' AND j.expires_at>clock_timestamp()`,[job.event_id]);
+      return rows.length===1&&createHash('sha256').update(rows[0].command).digest('hex')===job.source_digest;
+    }
     const { rows } = await this.pool.query(`SELECT m.message_text
       FROM linebot.assistant_jobs j JOIN linebot.messages m
         ON m.message_id=j.source_message_id AND m.group_id=j.group_id
@@ -70,6 +83,11 @@ export class AssistantStore {
   }
 
   async readRequest(job) {
+    if(job.source_kind==='action'){
+      if(!await this.current(job))return null;
+      const {rows:[row]}=await this.pool.query('SELECT command FROM linebot.assistant_actions WHERE event_id=$1 AND group_id=$2 AND operator_user_id=$3',[job.source_action_id,job.group_id,job.operator_user_id]);
+      return row?.command||null;
+    }
     if (!['assist','workspace'].includes(job.kind) || !Number.isInteger(job.request_offset) || job.request_offset < 1 ||
         job.request_offset > 8000 || !await this.current(job)) return null;
     const { rows } = await this.pool.query(`SELECT m.message_text FROM linebot.messages m
@@ -172,9 +190,9 @@ export class AssistantStore {
     const { rows: [row] } = await this.pool.query(`SELECT
       (SELECT count(*)::integer FROM linebot.messages WHERE group_id=$1
         AND coalesce(sent_at,received_at) >= $2 AND coalesce(sent_at,received_at) < $3) AS messages,
-      (SELECT count(*)::integer FROM linebot.assistant_jobs WHERE group_id=$1
+      (SELECT count(*)::integer FROM linebot.assistant_jobs WHERE ($4::boolean OR group_id=$1)
         AND created_at >= $2 AND created_at < $3 AND kind IN ('summary','todos','assist')) AS used`,
-    [job.group_id, day.start, day.end]);
+    [job.group_id, day.start, day.end,Boolean(this.config.assistant.multiGroupEnabled)]);
     return { ...row, day: day.day, dailyLimit: this.config.assistant.dailyLimit };
   }
 

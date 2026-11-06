@@ -1,11 +1,15 @@
 const BASE_TABLES = ['messages', 'webhook_events', 'message_state'];
 
-export async function auditDatabase(db, { assistantEnabled = false, freeformEnabled = false,workspaceEnabled=false } = {}) {
+export async function auditDatabase(db, { assistantEnabled = false, freeformEnabled = false,workspaceEnabled=false,organizerEnabled=false,multiGroupEnabled=false } = {}) {
   const TABLES = [...(assistantEnabled ? [...BASE_TABLES, 'assistant_jobs'] : BASE_TABLES),
-    ...(workspaceEnabled?['assistant_context','work_items','work_proposals','work_events']:[])];
+    ...(workspaceEnabled?['assistant_context','work_items','work_proposals','work_events']:[]),
+    ...(organizerEnabled?['assistant_actions','topics','topic_events']:[]),
+    ...(multiGroupEnabled?['group_settings','group_events']:[])];
   const issues = [];
   if (freeformEnabled && !assistantEnabled) issues.push('freeform_requires_assistant');
   if(workspaceEnabled&&!freeformEnabled)issues.push('workspace_requires_freeform');
+  if(organizerEnabled&&!workspaceEnabled)issues.push('organizer_requires_workspace');
+  if(multiGroupEnabled&&!organizerEnabled)issues.push('multi_group_requires_organizer');
   const { rows: [role] } = await db.query(`SELECT current_user AS name,
     rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls, rolinherit, rolcanlogin
     FROM pg_catalog.pg_roles WHERE rolname = current_user`);
@@ -28,8 +32,8 @@ export async function auditDatabase(db, { assistantEnabled = false, freeformEnab
   for (const name of TABLES) {
     const table = tables.find(t => t.relname === name);
     if (!table || !table.relrowsecurity || table.owned || !table.can_select || !table.can_insert ||
-        (!['webhook_events','work_events'].includes(name) && !table.can_update) || (name === 'messages' && !table.can_delete)
-        || (name==='work_events'&&table.can_update)||(['assistant_context','work_items','work_proposals','work_events'].includes(name)&&table.can_delete)) {
+        (!['webhook_events','work_events','assistant_actions','topic_events','group_events'].includes(name) && !table.can_update) || (name === 'messages' && !table.can_delete)
+        || (['work_events','assistant_actions','topic_events','group_events'].includes(name)&&table.can_update)||(['assistant_context','work_items','work_proposals','work_events','assistant_actions','topics','topic_events','group_settings','group_events'].includes(name)&&table.can_delete)) {
       issues.push(`table_permissions:${name}`);
     }
   }
@@ -53,6 +57,17 @@ export async function auditDatabase(db, { assistantEnabled = false, freeformEnab
     await db.query('SELECT code,group_id,version,body,sources,created_at,updated_at FROM linebot.work_items WHERE false');
     await db.query('SELECT code,group_id,operator_user_id,source_event_id,actions,sources,status,created_at,expires_at,applied_at,confirmed_event_id FROM linebot.work_proposals WHERE false');
     await db.query('SELECT proposal_code,ordinal,item_code,group_id,version,previous_body,next_body,confirmed_event_id,created_at FROM linebot.work_events WHERE false');
+  }
+  if(organizerEnabled){
+    await db.query('SELECT source_kind,source_action_id FROM linebot.assistant_jobs WHERE false');
+    await db.query('SELECT topic_code FROM linebot.work_items WHERE false');
+    await db.query('SELECT event_id,group_id,operator_user_id,command,received_at FROM linebot.assistant_actions WHERE false');
+    await db.query('SELECT code,group_id,version,definition,sources,created_at,updated_at FROM linebot.topics WHERE false');
+    await db.query('SELECT proposal_code,topic_code,group_id,version,previous_definition,next_definition,confirmed_event_id,created_at FROM linebot.topic_events WHERE false');
+  }
+  if(multiGroupEnabled){
+    await db.query('SELECT code,group_id,label,operator_user_id,version,enabled,sources,created_at,updated_at FROM linebot.group_settings WHERE false');
+    await db.query('SELECT proposal_code,group_code,group_id,version,previous_settings,next_settings,confirmed_event_id,created_at FROM linebot.group_events WHERE false');
   }
 
   // PUBLIC grants and column grants still count even with NOINHERIT.

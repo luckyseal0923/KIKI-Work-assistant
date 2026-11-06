@@ -9,31 +9,42 @@ import { AssistantWorker } from './assistant-worker.js';
 import { OpenAISummarizer, LineReplier } from './assistant-clients.js';
 import { OpenAIDialogue } from './assistant-dialogue.js';
 import {WorkStore} from './work-store.js';
+import {TopicStore} from './topic-store.js';
+import {GroupStore} from './group-store.js';
 
 let pool;
 let server;
 let assistantWorker;
 try {
   const config = loadConfig();
-  let store;
+  let store,groups;
   if (config.database) {
     pool = new pg.Pool(config.database);
     pool.on('error', () => log('database_connection_error'));
     const audit = await auditDatabase(pool, { assistantEnabled: config.assistant.enabled,
-      freeformEnabled: config.assistant.freeformEnabled,workspaceEnabled:config.assistant.workspaceEnabled });
+      freeformEnabled: config.assistant.freeformEnabled,workspaceEnabled:config.assistant.workspaceEnabled,organizerEnabled:config.assistant.organizerEnabled,multiGroupEnabled:config.assistant.multiGroupEnabled });
     if (!audit.ok) {
       log('database_audit_failed', { issues: audit.issues });
       throw new Error('Database audit failed');
     }
     store = new PgStore(pool, { assistantEnabled: config.assistant.enabled });
     log('database_audit_passed');
-    if (config.assistant.enabled) assistantWorker = new AssistantWorker({ config,
-      store: new AssistantStore(pool, config), summarizer: new OpenAISummarizer(config.assistant),
-      dialogue: config.assistant.freeformEnabled ? new OpenAIDialogue(config.assistant) : null,
-      workspace:config.assistant.workspaceEnabled?new WorkStore(pool,config):null,
-      replier: new LineReplier(config.assistant.lineAccessToken), log });
+    groups=config.assistant.multiGroupEnabled?new GroupStore(pool,config):null;
+    await groups?.bootstrap();
+    if (config.assistant.enabled) {
+      const summarizer=new OpenAISummarizer(config.assistant),dialogue=config.assistant.freeformEnabled?new OpenAIDialogue(config.assistant):null;
+      const replier=new LineReplier(config.assistant.lineAccessToken);
+      const makeWorker=scoped=>{
+        const workspace=scoped.assistant.workspaceEnabled?new WorkStore(pool,scoped):null;
+        const topics=scoped.assistant.organizerEnabled?new TopicStore(pool,scoped,workspace):null;
+        if(workspace){workspace.topics=topics;workspace.groups=groups;}
+        return new AssistantWorker({config:scoped,store:new AssistantStore(pool,scoped),summarizer,dialogue,workspace,topics,groups,replier,log});
+      };
+      assistantWorker=makeWorker(config);
+      if(groups)assistantWorker.workerForJob=async job=>{const scoped=await groups.forJob(job);return scoped?makeWorker(scoped):null;};
+    }
   }
-  server = createServer({ config, store, assistantWorker, log });
+  server = createServer({ config, store, assistantWorker,groups, log });
   server.on('error', () => {
     log('server_failed'); process.exitCode = 1;
     (async () => { await assistantWorker?.stop(); await pool?.end(); })().catch(() => {});
@@ -41,7 +52,7 @@ try {
   server.listen(config.port, '0.0.0.0', () => {
     assistantWorker?.start();
     log('server_started', { mode: config.mode, assistant_enabled: config.assistant.enabled,
-      freeform_enabled: Boolean(config.assistant.freeformEnabled),workspace_enabled:Boolean(config.assistant.workspaceEnabled) });
+      freeform_enabled: Boolean(config.assistant.freeformEnabled),workspace_enabled:Boolean(config.assistant.workspaceEnabled),organizer_enabled:Boolean(config.assistant.organizerEnabled),multi_group_enabled:Boolean(config.assistant.multiGroupEnabled) });
   });
   let stopping = false;
   const stop = () => {

@@ -1,5 +1,7 @@
 # 綺綺 KIKI｜智慧秘書
 
+**第五階段本機準備完成，尚未上線。** 新增卡片按鈕、可行動錯誤提示、確認後生效的主題別名，以及管理者自行申請／確認的多群啟用。各群資料分開、同一管理者操作、全群共用每日 20 次 AI 額度；原管理群設定保留，不需再提供群組 ID 或新金鑰。兩新旗標預設關閉，須先套用 006 與稽核。見 [使用方式](docs/ORGANIZER_ASSISTANT.md)、[精確資料庫影響與停用](docs/ORGANIZER_DATABASE_CHANGE.md)、[第五階段驗證邊界](docs/PHASE5_ACCEPTANCE.md)。
+
 **2026-11-07 第四階段已部署，87 項本機測試及核心真實 LINE 流程通過。** 已驗證連續追問負責人／期限、提案確認才寫入、完成工作與兩版歷程，以及沿用主題查回前一天的已保存紀錄。每次只傳精選來源，預設 20 則／筆、12,000 字元；明確新增與短追問各只需一次 API，確認、清單與歷程不呼叫 AI。模型維持 Luna。005 已 COMMIT，專用帳號稽核與 HTTPS 健康／就緒通過；原始碼 `ASSISTANT_WORKSPACE_ENABLED` 預設仍為 false。單群、指定管理者及每日額度限制保留。見 [操作與部署](docs/WORKSPACE_ASSISTANT.md)、[用量控制](docs/COST_CONTROL.md)、[資料庫影響與復原](docs/WORKSPACE_DATABASE_CHANGE.md)、[驗收證據與未實測邊界](docs/PHASE4_ACCEPTANCE.md)。
 
 Your Intelligent Work Assistant

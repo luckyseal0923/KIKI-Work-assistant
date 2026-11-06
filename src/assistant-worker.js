@@ -3,6 +3,10 @@ import { AssistantError } from './assistant-clients.js';
 import { UNSUPPORTED_TASK } from './assistant-dialogue.js';
 import { resolveRequestPlan } from './assistant-scope.js';
 import {workspaceControl,isFollowup,fastFollowup,directWorkPlan,normalizeRequest,describeWork,renderProposal,workQueryDate} from './work-actions.js';
+import {flexReply} from './assistant-cards.js';
+import {describeTopic} from './topic-actions.js';
+import {failureMessage} from './assistant-errors.js';
+import {describeGroup} from './group-actions.js';
 
 const time = value => new Intl.DateTimeFormat('zh-TW', { timeZone: 'Asia/Taipei', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(value));
 
@@ -56,8 +60,8 @@ export function renderDialogue(job, plan, snapshot, answer) {
 }
 
 export class AssistantWorker {
-  constructor({ config, store, summarizer, dialogue, workspace, replier, log = () => {}, now = () => Date.now() }) {
-    Object.assign(this, { config, store, summarizer, dialogue, workspace, replier, log, now });
+  constructor({ config, store, summarizer, dialogue, workspace,topics,groups,workerForJob, replier, log = () => {}, now = () => Date.now() }) {
+    Object.assign(this, { config, store, summarizer, dialogue, workspace,topics,groups,workerForJob, replier, log, now });
     this.stopping = false; this.pending = null; this.timer = null; this.abort = new AbortController();
   }
   start() {
@@ -75,23 +79,37 @@ export class AssistantWorker {
     for (let i = 0; !this.stopping && i < 10; i++) {
       const job = await this.store.claim();
       if (!job) return;
-      await this.process(job);
+      const worker=this.workerForJob?await this.workerForJob(job):this;
+      if(!worker){await this.store.finish(job,'canceled','group_disabled');continue;}
+      worker.abort=this.abort;
+      await worker.process(job);
     }
   }
   async process(job) {
     let attemptedReply = false, snapshot = null,cacheContext=false,contextScope={},contextMemory=null,validateContext=null,pendingApi=false;
+    let buttons=[],stage='request',requestForError='',applied=false;
+    const proposalButtons=p=>[{action:'confirm',code:p.code,expires:new Date(p.expires_at||this.now()+600000).getTime()},
+      {action:'discard',code:p.code,expires:new Date(p.expires_at||this.now()+600000).getTime()}];
+    const workButtons=records=>records.slice(0,2).flatMap(r=>[
+      ...(['active','in_progress'].includes(r.body.status)&&r.available!==false?[{action:'finish',code:r.code,version:r.version}]:[]),
+      {action:'history',code:r.code,version:r.version}]);
     const metrics = {};
     const remaining = () => new Date(job.expires_at).getTime() - this.now();
+    const groupAllowed=async()=>{if(this.groups&&!await this.groups.stillAllowed(job,this.config))throw new AssistantError('group_disabled');};
     const send = async text => {
-      if (this.stopping || remaining() < 1000) throw new AssistantError('expired');
+      if (this.stopping || this.abort.signal.aborted || remaining() < 1000) throw new AssistantError('expired');
+      if(this.groups&&!await this.groups.stillAllowed(job,this.config))throw new AssistantError('group_disabled');
       if (!await this.store.unchanged(job, snapshot)) throw new AssistantError('source_changed');
       if(this.workspace&&!await this.workspace.unchanged(job,snapshot))throw new AssistantError('source_changed');
       if(this.workspace&&!await this.workspace.contextUnchanged(job,validateContext))throw new AssistantError('source_changed');
       attemptedReply = true;
-      await this.replier.reply(decryptReplyToken(job.encrypted_reply_token, this.config.secret), text,
+      stage='reply';
+      if(this.config.assistant.organizerEnabled&&!this.config.groupControl)buttons=[...buttons,{action:'list'},{action:'topics'}].slice(0,8);
+      await this.replier.reply(decryptReplyToken(job.encrypted_reply_token, this.config.secret), this.config.assistant.organizerEnabled?flexReply(this.config,text,buttons):text,
         { signal: this.abort.signal, timeout: Math.min(6000, remaining()) });
     };
     try {
+      if(this.groups&&!await this.groups.stillAllowed(job,this.config))throw new AssistantError('group_disabled');
       if (!await this.store.current(job)) throw new AssistantError('source_changed');
       let text;
       if (job.kind === 'help' || job.kind === 'unsupported') text = job.kind === 'help' ? helpText(this.config)
@@ -101,25 +119,77 @@ export class AssistantWorker {
         : '上一個 AI 請求剛送出，請稍候再下指令。';
       else if (job.kind === 'status') {
         const status = await this.store.status(job);
-        text = `綺綺 KIKI｜狀態\n${status.day}（臺北）\n今日已保存 ${status.messages} 則訊息。\n今日已接受 ${status.used} 次 AI 請求，上限 ${status.dailyLimit} 次。\n只接受管理者在此群組標記 KIKI 的要求。`;
+        text = `綺綺 KIKI｜狀態\n${status.day}（臺北）\n本群今日已保存 ${status.messages} 則訊息。\n${this.config.assistant.multiGroupEnabled?'所有群合計':'今日'}已接受 ${status.used} 次 AI 請求，每日上限 ${status.dailyLimit} 次。\n只接受管理者在此群組標記 KIKI 的要求。`;
         if(this.workspace){const usage=await this.workspace.usage(job);text+=`\n今日已記錄輸入／輸出：${usage.today.input}／${usage.today.output} tokens。\n模型費用估算：今日 US$${usage.today.usd.toFixed(4)}；本月 US$${usage.month.usd.toFixed(4)}。\n依 ${usage.asOf} 標準未快取牌價估算，非實際帳單。${usage.month.unpriced?`另有 ${usage.month.unpriced} 筆缺少完整計價資料。`:''}`;}
       } else if(job.kind==='workspace'){
         if(!this.workspace)throw new AssistantError('source_changed');
         const request=await this.store.readRequest(job),control=request&&workspaceControl(request);
+        stage='control';requestForError=request||'';
         if(!control)throw new AssistantError('source_changed');
-        if(control.action==='reset'){await this.workspace.clearContext(job);text='已清除短期對話記憶。原始群組紀錄與正式工作仍可查詢。';}
+        if(['topics','topic','topic_define','topic_invalid','work_state'].includes(control.action)&&!this.topics)throw new AssistantError('organizer_disabled');
+        if(control.action.startsWith('group')&&!this.groups)throw new AssistantError('group_disabled');
+        if(control.action==='group_invalid')text='請用「申請啟用本群：群組名稱」。會先顯示收錄範圍與權限提案，由既定管理者確認後才啟用；不用貼群組 ID 或金鑰。';
+        else if(['group_enroll','group_disable'].includes(control.action)){
+          const actions=await this.groups.prepare(job,this.config,control);
+          const proposal=await this.workspace.createProposal(job,actions,null);
+          snapshot={messages:[],ids:[],versions:[],sourceRefs:[],total:0,workspaceSourceRefs:proposal.sources};
+          text=renderProposal(proposal);buttons=proposalButtons(proposal);
+        }else if(control.action==='group_status'){
+          const group=await this.groups.current(job);
+          text='綺綺 KIKI｜本群設定\n'+(group?describeGroup(group):'尚未啟用，不收錄一般訊息。請由既定管理者申請啟用並確認。');
+        }else if(control.action==='groups'){
+          const groups=await this.groups.list(job);
+          text='綺綺 KIKI｜群組清單\n'+groups.map(describeGroup).join('\n\n');
+        }else if(control.action==='topic_invalid')text='請用「建立主題：教學測試；別名：課程籌備、教材準備」，或「主題別名 教學測試：課程籌備、教材準備」。別名最多四個，每個 2～30 字；會先提出提案，確認後才生效。';
+        else if(control.action==='topics'){
+          const result=await this.topics.list(job);
+          text='綺綺 KIKI｜主題清單\n'+(result.topics.length?result.topics.map(t=>t.available===false?`${t.code}：來源已變更，定義待重新確認。`:describeTopic(t)).join('\n\n'):'尚未建立主題。可輸入「建立主題：名稱；別名：說法一、說法二」。');
+          if(result.partial)text+='\n（只列最近 20 個主題，請指定完整名稱或代碼。）';
+          buttons=result.topics.filter(t=>t.available!==false).slice(0,5).map(t=>({action:'topic',code:t.code,version:t.version}));
+        }else if(control.action==='topic'){
+          const topic=await this.topics.find(job,control.target,{exact:true});if(!topic)throw new AssistantError('topic_missing');
+          const result=await this.workspace.readItems(job,{status:null,topic});snapshot=this.workspace.recordSnapshot(result.items);
+          snapshot.topicRefs=[{code:topic.code,version:topic.version}];
+          text='綺綺 KIKI｜主題工作\n'+describeTopic(topic)+'\n\n'+(snapshot.messages.length?snapshot.messages.map(m=>m.text).join('\n\n'):'尚無關聯的已確認工作；主題別名仍可用於查找原始討論。');
+          if(result.totalIsLowerBound)text+='\n（僅列最近 20 筆工作，請縮小條件。）';
+          buttons=workButtons(result.items);cacheContext=true;contextScope={mode:'work_query',topicRef:snapshot.topicRefs[0]};
+        }else if(control.action==='topic_define'){
+          const prepared=await this.topics.prepare(job,control);
+          const proposal=await this.workspace.createProposal(job,prepared.actions,null,[],null,prepared.sources);
+          snapshot={messages:[],ids:[],versions:[],sourceRefs:[],total:0,workspaceSourceRefs:proposal.sources};
+          text=renderProposal(proposal);buttons=proposalButtons(proposal);
+        }else if(control.action==='work_state'){
+          const item=(await this.workspace.readItems(job,{itemCode:control.code,status:null})).items[0];
+          if(!item)throw new AssistantError('work_missing');
+          if(item.version!==control.version)throw new AssistantError('work_conflict');
+          if(item.available===false)throw new AssistantError('work_source_changed');
+          if(item.body.status===control.status)text='這件工作已經是指定狀態，不會重複更新。';
+          else{
+            let actions=[{operation:'update',target:item.code,expected_version:item.version,previous_body:item.body,body:{...item.body,status:control.status},refs:[]}];
+            const decorated=await this.topics.decorateActions(job,actions);actions=decorated.actions;
+            const proposal=await this.workspace.createProposal(job,actions,null,[item],null,decorated.sources);
+            snapshot=this.workspace.recordSnapshot([item]);snapshot.workspaceSourceRefs=proposal.sources;
+            text=renderProposal(proposal);buttons=proposalButtons(proposal);cacheContext=true;contextScope={mode:'work_propose',proposalCode:proposal.code};
+          }
+        }else if(control.action==='reset'){await this.workspace.clearContext(job);text='已清除短期對話記憶。原始群組紀錄與正式工作仍可查詢。';}
         else if(control.action==='discard')text=await this.workspace.discard(job,control.code);
         else if(control.action==='pending'){
           const pending=await this.workspace.pending(job);
           text=pending.length===1?renderProposal(pending[0]):pending.length
             ?'綺綺 KIKI｜待確認提案\n'+pending.map(p=>`${p.code}：${p.actions.length} 項動作`).join('\n')+'\n請以完整提案代碼確認或取消。':'目前沒有尚未到期的待確認提案。';
+          if(pending.length===1)buttons=proposalButtons(pending[0]);
         }else if(control.action==='confirm'){
+          stage='apply';
           const result=await this.workspace.apply(job,control.code);
-          const notices={already_applied:'這份提案已套用，不會重複建立工作。',missing:'找不到這份提案。',expired:'提案已到期，請重新提出。',discarded:'這份提案已取消。',invalid:'這份提案已失效，請重新核對後提出。',source_changed:'來源已修改或收回，提案未套用。',conflict:'工作已有新版本，提案未套用，請重新查詢。',duplicate:'已有相同正式工作，提案未重複套用。'};
-          text=result.status==='applied'?'綺綺 KIKI｜工作已確認\n'+result.items.map(describeWork).join('\n\n'):notices[result.status]||'這份提案目前無法套用。';
-          if(result.status==='applied'){
+          applied=result.status==='applied';
+          const notices={already_applied:'這份提案已套用，不會重複建立或更新。',missing:'找不到這份提案。',expired:'提案已到期，請重新提出。',discarded:'這份提案已取消。',invalid:'這份提案已失效，請重新核對後提出。',source_changed:'來源已修改或收回，提案未套用。',conflict:'工作或設定已有新版本，提案未套用，請重新查詢。',duplicate:'已有相同正式紀錄，提案未重複套用。',group_limit:`已達目前 ${this.config.assistant.maxGroups} 個啟用群組的上限，本群未啟用。請先在不需使用的群組停用並確認。`};
+          text=result.status==='applied'?result.groups?'綺綺 KIKI｜群組設定已確認\n'+result.groups.map(describeGroup).join('\n\n')+'\n'+(result.groups[0].enabled?'從啟用後的新文字開始收錄；各群查詢與工作分開。':'已停止收錄一般訊息；既有資料保留。'):result.topics?'綺綺 KIKI｜主題已確認\n'+result.topics.map(describeTopic).join('\n\n'):'綺綺 KIKI｜工作已確認\n'+result.items.map(describeWork).join('\n\n'):notices[result.status]||'這份提案目前無法套用，請重新查詢現況。';
+          if(result.groups)buttons=[];
+          if(result.topics){buttons=result.topics.map(t=>({action:'topic',code:t.code,version:t.version}));snapshot={messages:[],ids:[],versions:[],topicRefs:result.topics.map(t=>({code:t.code,version:t.version}))};}
+          if(result.status==='applied'&&result.items){
             const records=[];for(const item of result.items)records.push(...(await this.workspace.readItems(job,{itemCode:item.code,status:null})).items);
             snapshot=this.workspace.recordSnapshot(records);cacheContext=true;contextScope={mode:'work_query'};
+            buttons=workButtons(records);
           }
         }else if(control.action==='history'){
           const events=await this.workspace.history(job,control.code);
@@ -129,6 +199,7 @@ export class AssistantWorker {
           snapshot=this.workspace.recordSnapshot(result.items);snapshot.total=result.total;snapshot.totalIsLowerBound=result.totalIsLowerBound;snapshot.truncated ||= result.totalIsLowerBound;
           text='綺綺 KIKI｜工作清單\n'+(snapshot.messages.length?snapshot.messages.map(m=>m.text).join('\n\n'):'目前沒有已確認、尚未完成的工作。');
           if(result.totalIsLowerBound)text+='\n（僅列最近20筆，請以主題縮小查詢。）';cacheContext=true;contextScope={mode:'work_query'};
+          buttons=workButtons(result.items);
         }
         metrics.messageCount=snapshot?.messages.length||0;
       } else if (job.kind === 'assist') {
@@ -136,6 +207,7 @@ export class AssistantWorker {
         if (remaining() < 9000) throw new AssistantError('expired');
         const rawRequest = await this.store.readRequest(job);
         const request = rawRequest&&normalizeRequest(rawRequest);
+        requestForError=request||'';
         if (!request || !await this.store.unchanged(job, null)) throw new AssistantError('source_changed');
         const deadline = this.now() + Math.min(20000, remaining() - 7000);
         const aiRemaining = () => {
@@ -152,7 +224,7 @@ export class AssistantWorker {
         };
         const memory=this.workspace&&isFollowup(request)?await this.workspace.readContext(job):null;
         let proposed=(this.workspace&&directWorkPlan(request))||fastFollowup(request,memory);
-        if(!proposed){metrics.apiCalls=(metrics.apiCalls||0)+1;pendingApi=true;proposed=await this.dialogue.plan(request, job.range_start,
+        if(!proposed){await groupAllowed();stage='plan';metrics.apiCalls=(metrics.apiCalls||0)+1;pendingApi=true;proposed=await this.dialogue.plan(request, job.range_start,
           { signal: this.abort.signal, timeout: Math.min(6000, aiRemaining()),context:memory });pendingApi=false;}
         addUsage(proposed);
         let plan = this.workspace&&['followup','work_query','work_propose'].includes(proposed.mode)?proposed:resolveRequestPlan(proposed, request, job);
@@ -164,6 +236,7 @@ export class AssistantWorker {
         if (plan.mode === 'unsupported') text = UNSUPPORTED_TASK;
         else if (plan.mode === 'clarify') text = `綺綺 KIKI｜待確認\n${plan.clarification}`;
         else {
+          stage='search';
           if (!await this.store.unchanged(job, null)) throw new AssistantError('source_changed');
           if(plan.mode==='followup')snapshot=memory.snapshot;
           else if(plan.mode==='work_query'){
@@ -171,8 +244,10 @@ export class AssistantWorker {
             const status=/已完成/u.test(request)?'done':/已取消/u.test(request)?'canceled':/全部/u.test(request)?null:'open';
             const dueOn=workQueryDate(request,job.created_at);
             const keyword=!dueOn&&plan.keyword&&!/^(工作|任務|待辦|決議|行程|未完成|已完成|進度|狀態)$/u.test(plan.keyword)?plan.keyword:null;
-            const result=await this.workspace.readItems(job,{itemCode,status,keyword,dueOn,kind:/行程/u.test(request)&&!/待辦|工作|任務/u.test(request)?'event':null});
+            const topic=this.topics&&!itemCode?await this.topics.find(job,request):null;
+            const result=await this.workspace.readItems(job,{itemCode,status,keyword:topic?null:keyword,topic,dueOn,kind:/行程/u.test(request)&&!/待辦|工作|任務/u.test(request)?'event':null});
             snapshot=this.workspace.recordSnapshot(result.items);snapshot.total=result.total;snapshot.totalIsLowerBound=result.totalIsLowerBound;snapshot.truncated ||= result.totalIsLowerBound;
+            if(topic)snapshot.topicRefs=[{code:topic.code,version:topic.version}];buttons=workButtons(result.items);
           }else if(plan.mode==='work_propose'){
             const itemCode=request.match(/\bW[0-9A-F]{8}\b/iu)?.[0]?.toUpperCase()||plan.inheritedItemCode||null;
             const createOnly=/新增|建立|記下|幫我記/u.test(request)&&!itemCode&&!memory;
@@ -183,23 +258,31 @@ export class AssistantWorker {
             if(['today','history'].includes(plan.source_scope)&&/討論|訊息|群組|紀錄|根據/u.test(request)){
               const sourcePlan=resolveRequestPlan({...plan,mode:plan.source_scope==='today'?'group_today':'group_history'},request,job);
               if(sourcePlan.mode==='clarify')throw new AssistantError('invalid_work_range');
-              snapshot=await this.store.readMessages({...job,keyword:sourcePlan.keyword,searchTerms:sourcePlan.search_terms||[],history:sourcePlan.history,range_start:sourcePlan.sourceStart,range_end:sourcePlan.sourceEnd,scopeLabel:sourcePlan.scopeLabel});
+              const selectedPlan=this.topics?await this.topics.searchPlan(job,request,sourcePlan):sourcePlan;
+              snapshot=await this.store.readMessages({...job,keyword:selectedPlan.keyword,searchTerms:selectedPlan.search_terms||[],history:selectedPlan.history,range_start:selectedPlan.sourceStart,range_end:selectedPlan.sourceEnd,scopeLabel:selectedPlan.scopeLabel});
+              if(selectedPlan.topicRef)snapshot.topicRefs=[selectedPlan.topicRef];
             }
             ({records,snapshot}=this.workspace.proposalInput(snapshot,records));
             if(!await this.store.unchanged(job,snapshot)||!await this.workspace.unchanged(job,snapshot))throw new AssistantError('source_changed');
-            metrics.apiCalls=(metrics.apiCalls||0)+1;
-            pendingApi=true;
+            await groupAllowed();metrics.apiCalls=(metrics.apiCalls||0)+1;
+            stage='proposal';pendingApi=true;
             const result=await this.dialogue.propose(request,{records,snapshot,context:memory,createdAt:job.created_at},{signal:this.abort.signal,timeout:aiRemaining()});
             pendingApi=false;
             addUsage(result);
-            const proposal=await this.workspace.createProposal(job,result.actions,snapshot,records,memory?.previousProposal,memory?.requestRefs||[]);
+            const decorated=this.topics?await this.topics.decorateActions(job,result.actions):{actions:result.actions,sources:[]};
+            const proposal=await this.workspace.createProposal(job,decorated.actions,snapshot,records,memory?.previousProposal,[...(memory?.requestRefs||[]),...decorated.sources]);
             validateContext=null; // The new proposal now owns/rechecks the complete source chain; the old proposal was superseded.
             snapshot ||= {messages:[],ids:[],versions:[],sourceRefs:[],total:0,truncated:false,readAt:new Date().toISOString()};
             snapshot.workspaceSourceRefs=proposal.sources;
             text=renderProposal(proposal);cacheContext=true;contextScope={mode:'work_propose',proposalCode:proposal.code,query:snapshot.query||null};
-          }else if (['group_today','group_history'].includes(plan.mode)) snapshot = await this.store.readMessages({ ...job,
-            keyword: plan.keyword,searchTerms:plan.search_terms||[], history: plan.history, eventDate: plan.eventDate, scopeLabel: plan.scopeLabel,
-            range_start: plan.sourceStart, range_end: plan.sourceEnd });
+            buttons=proposalButtons(proposal);
+          }else if (['group_today','group_history'].includes(plan.mode)){
+            if(this.topics)plan=await this.topics.searchPlan(job,request,plan);
+            snapshot = await this.store.readMessages({ ...job,
+              keyword: plan.keyword,searchTerms:plan.search_terms||[], history: plan.history, eventDate: plan.eventDate, scopeLabel: plan.scopeLabel,
+              range_start: plan.sourceStart, range_end: plan.sourceEnd });
+            if(plan.topicRef)snapshot.topicRefs=[plan.topicRef];
+          }
           if(this.workspace&&plan.eventDate&&!proposed.inheritedQuery){
             const dueOn=plan.eventDate.year?`${plan.eventDate.year}-${String(plan.eventDate.month).padStart(2,'0')}-${String(plan.eventDate.day).padStart(2,'0')}`:null;
             const records=(await this.workspace.readItems(job,{status:null,dueOn,eventDate:plan.eventDate,kind:/行程/u.test(request)?'event':null})).items;
@@ -211,8 +294,8 @@ export class AssistantWorker {
             :`${plan.scopeLabel||'本次範圍'}中尚無符合範圍的文字；這不代表沒有其他行程或討論。`;
           else if(plan.mode!=='work_propose') {
             if (!await this.store.unchanged(job, snapshot)) throw new AssistantError('source_changed');
-            metrics.apiCalls=(metrics.apiCalls||0)+1;
-            pendingApi=true;
+            await groupAllowed();metrics.apiCalls=(metrics.apiCalls||0)+1;
+            stage='answer';pendingApi=true;
             const answer = await this.dialogue.answer(request, plan, snapshot,
               { signal: this.abort.signal, timeout: aiRemaining(),context:memory });
             pendingApi=false;
@@ -224,14 +307,19 @@ export class AssistantWorker {
         }
       } else if (['summary','todos'].includes(job.kind)) {
         if (remaining() < 9000) throw new AssistantError('expired');
-        snapshot = await this.store.readMessages(job);
+        let selected=job;
+        if(this.topics&&job.keyword){
+          const plan=await this.topics.searchPlan(job,job.keyword,{keyword:job.keyword,search_terms:[]});
+          selected={...job,keyword:plan.keyword,searchTerms:plan.search_terms};
+          snapshot=await this.store.readMessages(selected);if(plan.topicRef)snapshot.topicRefs=[plan.topicRef];
+        }else snapshot = await this.store.readMessages(job);
         metrics.messageCount = snapshot.messages.length; metrics.truncated = snapshot.truncated;
         if (!snapshot.messages.length) text = '今天尚無符合範圍、可供整理的已保存訊息。';
         else {
           if (!await this.store.unchanged(job, snapshot)) throw new AssistantError('source_changed');
           if (remaining() < 8000) throw new AssistantError('expired');
-          metrics.apiCalls=(metrics.apiCalls||0)+1;
-          pendingApi=true;
+          await groupAllowed();metrics.apiCalls=(metrics.apiCalls||0)+1;
+          stage='answer';pendingApi=true;
           const result = await this.summarizer.summarize(job, snapshot,
             { signal: this.abort.signal, timeout: Math.min(20000, remaining() - 7000) });
           pendingApi=false;
@@ -246,14 +334,20 @@ export class AssistantWorker {
       if(cacheContext)try{await this.workspace.saveContext(job,text,snapshot,contextScope,contextMemory);}catch{this.log('assistant_context_unavailable');}
       this.log('assistant_job_finished', { kind: job.kind, status: 'sent', message_count: metrics.messageCount ?? 0 });
     } catch (error) {
+      const failureStage=stage;
       if(pendingApi){metrics.inputTokens=null;metrics.outputTokens=null;}
-      const code = error instanceof AssistantError ? error.code : 'assistant_failed';
-      const canceled = code === 'source_changed';
+      const known=new Set(['work_preview_too_long','work_conflict','work_source_changed','work_missing','invalid_work_output','invalid_work_target','ungrounded_work_owner','ungrounded_work_date','conflicting_work_owner']);
+      const code = error instanceof AssistantError ? error.code : known.has(error.message)?error.message:'assistant_failed';
+      const canceled = ['source_changed','group_disabled'].includes(code);
       if (!attemptedReply && !canceled && !this.stopping && remaining() > 1500) {
-        try { await send(code === 'ai_refused' ? '這次內容無法整理，請查看原始討論。' : '這次整理未完成，請稍後重新下指令。'); } catch {}
+        try {buttons=[];await send(this.config.assistant.organizerEnabled?failureMessage(code,{stage,request:requestForError,applied}):code === 'ai_refused' ? '這次內容無法整理，請查看原始討論。' : '這次整理未完成，請稍後重新下指令。');}catch{}
+      }
+      if(canceled&&this.config.assistant.organizerEnabled&&!attemptedReply&&!this.stopping&&remaining()>1500&&await this.store.current(job)){
+        snapshot=null;validateContext=null;buttons=[];
+        try{await send('這次引用的訊息、提案或工作版本已改變，沒有發布舊答案。請重新指定主題或查看目前工作清單。');}catch{}
       }
       await this.store.finish(job, canceled ? 'canceled' : code === 'expired' ? 'expired' : 'failed', code, metrics);
-      this.log('assistant_job_finished', { kind: job.kind, status: canceled ? 'canceled' : 'failed', error_code: code });
+      this.log('assistant_job_finished', { kind: job.kind, status: canceled ? 'canceled' : 'failed', error_code: code,...(this.config.assistant.organizerEnabled?{stage:failureStage,applied}: {}) });
     }
   }
 }

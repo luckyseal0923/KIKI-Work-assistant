@@ -5,4 +5,5 @@
 !src/**
 !scripts/
 !scripts/check-database.js
+!scripts/check-assistant-config.js
 !scripts/healthcheck.js
