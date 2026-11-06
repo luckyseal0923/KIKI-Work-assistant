@@ -55,6 +55,19 @@ test('workspace schemas bound expanded search terms and reject forged query capa
   }
 });
 
+test('single explicit assignment survives model omission without filling ambiguous or multiple actions',()=>{
+  const request='新增待辦：主題 KIKI-WORK-20261107-01，由測試角色丁負責整理合成教材，期限 2026/11/10 中午。';
+  const action=rawAction({owner:null,due_text:'2026/11/10 中午'});
+  const validate=(actions,source=request)=>validateWorkActions({actions},{request:source,createdAt:'2026-11-07T01:00:00+08:00'});
+  assert.equal(validate([action])[0].body.owner,'測試角色丁');
+  assert.equal(validate([action],request.replace('由測試角色丁','由我'))[0].body.owner,'管理者');
+  assert.equal(validate([action],request.replace('由測試角色丁','如果有空，由測試角色丁'))[0].body.owner,null);
+  assert.equal(validate([action],request.replace('由測試角色丁','不要由測試角色丁'))[0].body.owner,null);
+  assert.equal(validate([action],request.replace('由測試角色丁','由甲或乙'))[0].body.owner,null);
+  assert.equal(validate([action,action])[0].body.owner,null);
+  assert.throws(()=>validate([rawAction({owner:'其他人',due_text:action.due_text})]),/conflicting_work_owner/);
+});
+
 test('proposal input shares one source budget between complete work records and archive excerpts',()=>{
   const store=new WorkStore(null,{assistant:{contextMessages:5,contextCharacters:2000}});
   const records=Array.from({length:20},(_,i)=>({code:'W'+i.toString(16).padStart(8,'0'),version:1,

@@ -1,6 +1,6 @@
 # 005 資料庫變更與復原範圍
 
-2026-11-07，本機已測試；正式執行另記錄。執行者為既有 `linebot` schema 擁有者 `supabase_admin`，應用仍是受限的 `linebot_app`。
+2026-11-07，已依使用者對本次部署、精確 ACL、SQL 與 COMMIT 的明確核准正式執行。畫面確認 COMMIT，應用帳號的新旗標稽核通過；執行者為既有 `linebot` schema 擁有者 `supabase_admin`，應用仍是受限的 `linebot_app`。執行前唯讀核對四個新表皆不存在。
 
 ## 精確影響
 

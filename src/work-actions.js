@@ -84,6 +84,13 @@ export function workQueryDate(request,anchor){
   return date?normalizeWorkDate(date[0],anchor).due_on:null;
 }
 
+function explicitCreateOwner(request){
+  if(/如果|假如|可能|尚未|未定|待確認|不要|不得|不是|不由|是否|能否|或者|[？?]/u.test(request))return null;
+  const owners=[...request.matchAll(/由\s*([^，,。；;：:\n]{1,100}?)\s*負責/gu)].map(m=>m[1].trim());
+  if(owners.length!==1||!owners[0]||/或/u.test(owners[0]))return null;
+  return owners[0]==='我'?'管理者':owners[0];
+}
+
 export function validateWorkActions(value,{records=[],messages=[],request,createdAt,context=null}) {
   if(!value||Object.keys(value).sort().join(',')!=='actions'||!Array.isArray(value.actions)||value.actions.length<1||value.actions.length>3)throw new Error('invalid_work_output');
   const known=new Map(records.filter(r=>r.available!==false).map(r=>[r.code,r]));
@@ -95,6 +102,11 @@ export function validateWorkActions(value,{records=[],messages=[],request,create
     if(action.operation==='create'?action.target!==null:!previous||targets.has(action.target))throw new Error('invalid_work_target');
     if(previous)targets.add(action.target);
     const body={kind:action.kind,topic:text(action.topic,80),title:text(action.title,500),owner:text(action.owner,100,true),due_text:text(action.due_text,200,true),status:action.status};
+    // A single explicit assignment in the owner's direct request must survive model omission.
+    // This only fills a new single action, never infers assignments from ambiguous discussions.
+    const assigned=value.actions.length===1&&action.operation==='create'?explicitCreateOwner(request):null;
+    if(assigned&&body.owner&&body.owner!==assigned)throw new Error('conflicting_work_owner');
+    if(assigned&&body.owner===null)body.owner=assigned;
     const quoted=action.refs.map(r=>refs.get(r));
     const availableText=[request,context?.previousRequest,...(context?.previousProposal?.actions||[]).flatMap(a=>[a.body.title,a.body.owner,a.body.due_text]),
       ...quoted.map(m=>m.text),...(previous?[previous.body.title,previous.body.owner,previous.body.due_text]:[])].filter(Boolean).join('\n');
