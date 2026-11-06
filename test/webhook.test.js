@@ -21,7 +21,8 @@ const sign = raw => createHmac('sha256', secret).update(raw).digest('base64');
 async function serve(t, options = {}) {
   const calls = [], logs = [];
   const store = { save: async events => { calls.push(events); return events.length; }, ready: async () => {}, ...options.store };
-  const server = createServer({ config: options.config || config, store, log: (...args) => logs.push(args) });
+  const server = createServer({ config: options.config || config, store, assistantWorker: options.assistantWorker,
+    log: (...args) => logs.push(args) });
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
   t.after(() => new Promise(resolve => { server.close(resolve); server.closeAllConnections(); }));
@@ -126,6 +127,20 @@ test('does not acknowledge before storage commits', async t => {
   assert.equal(acknowledged, false);
   commit();
   assert.equal((await pending).status, 200);
+});
+
+test('assistant wake happens after durable storage and never waits for AI before webhook acknowledgement', { timeout: 3000 }, async t => {
+  let woke = 0;
+  const s = await serve(t, { config: { ...config, assistant: { enabled: true, operatorUserId: user,
+    dailyLimit: 20, cooldownSeconds: 30 } },
+  assistantWorker: { wake: () => { woke++; return new Promise(() => {}); } } });
+  const command = event({ timestamp: Date.now(), replyToken: 'synthetic-reply-token',
+    message: { id: 'synthetic-command', type: 'text', text: '@KIKI 幫助',
+      mention: { mentionees: [{ index: 0, length: 5, type: 'user', isSelf: true }] } } });
+  assert.equal((await s.post(JSON.stringify({ events: [command] }))).status, 200);
+  assert.equal(s.calls.length, 1); assert.equal(woke, 1);
+  assert.equal((await s.post(JSON.stringify({ events: [event()] }))).status, 200);
+  assert.equal(woke, 1);
 });
 
 test('burst beyond four in-flight deliveries gets 503 with a bounded storage queue', async t => {

@@ -1,3 +1,5 @@
+import { enqueueAssistantJob, cancelAssistantJobs } from './assistant-store.js';
+
 // Every query that includes webhook values uses PostgreSQL parameters.
 // message_state is both a per-message row lock and a permanent unsend tombstone.
 export const SQL = {
@@ -32,7 +34,7 @@ export const SQL = {
         m.last_edit_event_id COLLATE "C" < EXCLUDED.last_edit_event_id COLLATE "C"))`,
 };
 
-export async function persistEvents(client, events) {
+export async function persistEvents(client, events, { assistantEnabled = false } = {}) {
   // Consistent lock order prevents deadlocks between multi-event deliveries.
   const freshIds = new Set();
   for (const eventId of [...new Set(events.map(e => e.eventId))].sort()) {
@@ -49,12 +51,15 @@ export async function persistEvents(client, events) {
     if (!state.rows.length) throw new Error('Message group conflict');
     if (state.rows[0].unsent_at != null) {
       await client.query(SQL.remove, [event.messageId, event.groupId]);
+      if (assistantEnabled) await cancelAssistantJobs(client, event.messageId, event.groupId);
     } else if (event.kind === 'message') {
       await client.query(SQL.original, [event.messageId, event.eventId, event.groupId,
         event.userId, event.text, event.quotedMessageId, event.at]);
+      if (assistantEnabled && event.assistantJob) await enqueueAssistantJob(client, event);
     } else {
       await client.query(SQL.edit, [event.messageId, event.groupId, event.userId,
         event.text, event.quotedMessageId, event.at, event.eventId]);
+      if (assistantEnabled) await cancelAssistantJobs(client, event.messageId, event.groupId);
     }
     processed++;
   }
@@ -62,7 +67,7 @@ export async function persistEvents(client, events) {
 }
 
 export class PgStore {
-  constructor(pool) { this.pool = pool; }
+  constructor(pool, { assistantEnabled = false } = {}) { this.pool = pool; this.assistantEnabled = assistantEnabled; }
 
   async save(events) {
     if (!events.length) return 0;
@@ -83,7 +88,7 @@ export class PgStore {
     timer.unref();
     try {
       await client.query('BEGIN');
-      const count = await persistEvents(client, events);
+      const count = await persistEvents(client, events, { assistantEnabled: this.assistantEnabled });
       await client.query('COMMIT');
       return count;
     } catch (error) {

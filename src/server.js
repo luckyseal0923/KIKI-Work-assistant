@@ -44,7 +44,7 @@ function respond(res, status, ok) {
   res.end(JSON.stringify({ ok }));
 }
 
-export function createServer({ config, store, log = () => {} }) {
+export function createServer({ config, store, assistantWorker = null, log = () => {} }) {
   let active = 0;
   let readiness = null;
   let readyUntil = 0;
@@ -82,6 +82,7 @@ export function createServer({ config, store, log = () => {} }) {
       if (events.length) {
         const processed = await store.save(events);
         log('batch_committed', { processed, duplicate: events.length - processed });
+        if (events.some(event => event.assistantJob)) assistantWorker?.wake();
       }
       respond(res, 200, true);
     } catch (error) {

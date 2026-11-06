@@ -4,6 +4,12 @@ Your Intelligent Work Assistant
 
 本機驗證紀錄。
 
+## 2026-11-06 第二階段本機驗證
+
+管理者真正標記 KIKI 後的今日摘要／待辦：`npm test` 共 44 項通過、0 失敗。測試使用合成資料、PGlite、模擬 OpenAI Responses 與 LINE reply；沒有正式金鑰或雲端發訊。涵蓋權限與指定管理者、原子排程、額度、去重、收回／編輯取消、文字上限、背景工作及快速 webhook 回應。測試日誌位於本機 `outputs/phase2-synthetic-tests-20261106.log`。
+
+新功能預設關閉。此紀錄不代表 `003_assistant_jobs.sql` 已在正式資料庫執行，或真實 API、LINE 回覆與新部署已驗收。設定與逐步驗證見 [ASSISTANT_SETUP.md](ASSISTANT_SETUP.md)。
+
 驗證日期：2026-11-05（臺灣）。僅使用合成資料，沒有讀取正式 LINE 內容、連上你的 Supabase，或取得正式秘密。
 
 ## 已執行

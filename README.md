@@ -2,7 +2,7 @@
 
 Your Intelligent Work Assistant
 
-第一階段：LINE 單群文字收訊端。
+第一階段：LINE 單群文字收訊端。第二階段：管理者標記 KIKI 後的今日摘要與待辦（預設關閉）。
 
 將一個明確允許的測試群文字，經 LINE 原始本文簽章驗證後，寫入你已建立的共用自架 Supabase `linebot` 區域。部署目標為 Coolify，使用受限的 PostgreSQL 帳號直接連線。
 
@@ -18,7 +18,7 @@ Your Intelligent Work Assistant
 4. 安全填入連線設定，改成 `APP_MODE=record`、設定唯一的 `ALLOWED_GROUP_ID`，重新部署。
 5. 按部署說明完成群組訊息、編輯、撤回的雲端驗收。
 
-這個階段不需 Channel access token、AI 金鑰或 Supabase `service_role` 金鑰。程式不會向 LINE 群組發訊，也不呼叫 AI、Google Sheets 或 LINE 的查詢 API。
+單純收訊不需 Channel access token 或 AI 金鑰。第二階段另需 OpenAI API 金鑰、LINE Channel access token 與管理者自己的 LINE User ID；不使用 Supabase `service_role` 金鑰。部署與驗收順序見 [摘要與待辦設定說明](docs/ASSISTANT_SETUP.md)。`ASSISTANT_ENABLED=false` 時維持原收訊行為，不呼叫 AI 或向 LINE 回覆。
 
 ## 本機安裝與測試
 
@@ -66,7 +66,9 @@ npm run start:local
 | `.env.example` | 只有欄位，沒有正式秘密 |
 | `migrations/001_event_safety.sql` | 增加編輯欄位、去重表與撤回狀態表 |
 | `migrations/002_role_login.sql` | 只為既有專用角色開啟登入並限制連線與逾時 |
+| `migrations/003_assistant_jobs.sql` | 僅新增 `linebot` 工作佇列與對應受限權限 |
 | `scripts/check-database.js` | 以實際應用帳號檢查權限，不讀其他系統內容 |
+| `scripts/check-assistant-config.js` | 只回報設定是否齊全，不顯示秘密或管理者 ID |
 | `test/` | 關鍵行為的自動測試 |
 | `docs/DEPLOY.md` | Coolify、LINE、SQL 與實際驗收步驟 |
 
@@ -83,6 +85,8 @@ npm run start:local
 應用程式日誌不記聊天原文、發言者、密碼、token、簽章或完整 webhook。只有識別模式會顯示設定所需的完整群組 ID；記錄模式只記處理數量與固定錯誤代碼。資料庫管理員仍可管理資料，權限檢查也不是應用間絕對隔離的保證。
 
 撤回會清除目前應用資料表中的文字。LINE 重送並不保證每次送達，若撤回事件從未送達，程式無從得知；資料庫既有備份、WAL 與外部平台日誌也需要由管理員依保存政策管理。此階段僅以合成資料試辦。
+
+啟用第二階段後，只有指定管理者在同一測試群真正標記 KIKI 的固定指令會觸發回覆；摘要與待辦會把限量當日文字交給 OpenAI，結果公開回到原群組。不是任意任務代理人，不會操作郵件、行事曆或其他系統。來源在處理期間被收回或修改時會取消發布；已送出的 LINE 摘要不會隨日後來源收回而自動消失。詳見第二階段設定說明。
 
 ## 官方依據
 

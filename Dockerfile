@@ -6,7 +6,7 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
 COPY --chown=node:node src ./src
-COPY --chown=node:node scripts/check-database.js scripts/healthcheck.js ./scripts/
+COPY --chown=node:node scripts/check-database.js scripts/check-assistant-config.js scripts/healthcheck.js ./scripts/
 USER node
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=4s --start-period=15s --retries=3 CMD ["node", "scripts/healthcheck.js"]

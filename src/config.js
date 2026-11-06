@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { USER_ID } from './assistant-command.js';
 
 export const GROUP_ID = /^C[0-9a-f]{32}$/i;
 
@@ -22,6 +23,32 @@ function port(value, field) {
     throw new ConfigError(field);
   }
   return Number(value);
+}
+
+function boundedInteger(env, field, fallback, min, max) {
+  const value = env[field] || String(fallback);
+  if (!/^\d+$/.test(value) || Number(value) < min || Number(value) > max) throw new ConfigError(field);
+  return Number(value);
+}
+
+export function assistantConfig(env, mode) {
+  if (env.ASSISTANT_ENABLED !== undefined && !['true', 'false', ''].includes(env.ASSISTANT_ENABLED)) {
+    throw new ConfigError('ASSISTANT_ENABLED');
+  }
+  if (env.ASSISTANT_ENABLED !== 'true') return { enabled: false };
+  if (mode !== 'record') throw new ConfigError('ASSISTANT_ENABLED');
+  const operatorUserId = required(env, 'OPERATOR_USER_ID');
+  if (!USER_ID.test(operatorUserId)) throw new ConfigError('OPERATOR_USER_ID');
+  const model = env.OPENAI_MODEL || 'gpt-6-luna';
+  if (!['gpt-6-luna', 'gpt-6.1-sol', 'gpt-6-astra'].includes(model)) throw new ConfigError('OPENAI_MODEL');
+  return {
+    enabled: true, operatorUserId, model,
+    openaiApiKey: required(env, 'OPENAI_API_KEY'),
+    lineAccessToken: required(env, 'LINE_CHANNEL_ACCESS_TOKEN'),
+    maxMessages: boundedInteger(env, 'ASSISTANT_MAX_MESSAGES', 100, 10, 100),
+    dailyLimit: boundedInteger(env, 'ASSISTANT_DAILY_LIMIT', 20, 1, 100),
+    cooldownSeconds: boundedInteger(env, 'ASSISTANT_COOLDOWN_SECONDS', 30, 10, 300),
+  };
 }
 
 export function databaseConfig(env) {
@@ -73,5 +100,6 @@ export function loadConfig(env = process.env) {
     port: port(env.PORT || '3000', 'PORT'),
     allowedGroupId: mode === 'record' ? env.ALLOWED_GROUP_ID : null,
     database: mode === 'record' ? databaseConfig(env) : null,
+    assistant: assistantConfig(env, mode),
   };
 }

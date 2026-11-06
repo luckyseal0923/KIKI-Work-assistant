@@ -1,5 +1,6 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { GROUP_ID } from './config.js';
+import { assistantJobForEvent } from './assistant-command.js';
 
 export class HttpError extends Error {
   constructor(status) { super('Request rejected'); this.status = status; }
@@ -57,12 +58,14 @@ export function selectEvents(raw, config) {
       if (typeof message.text !== 'string' || message.text.includes('\0') || message.text.length > 100000) {
         throw new HttpError(400);
       }
+      const assistantJob = assistantJobForEvent(event, config);
       events.push({
         ...base,
         messageId: id(message.id),
         userId: optionalId(source.userId),
         text: message.text,
         quotedMessageId: optionalId(message.quotedMessageId),
+        ...(assistantJob ? { assistantJob } : {}),
       });
     }
   }

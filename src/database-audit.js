@@ -1,6 +1,7 @@
-const TABLES = ['messages', 'webhook_events', 'message_state'];
+const BASE_TABLES = ['messages', 'webhook_events', 'message_state'];
 
-export async function auditDatabase(db) {
+export async function auditDatabase(db, { assistantEnabled = false } = {}) {
+  const TABLES = assistantEnabled ? [...BASE_TABLES, 'assistant_jobs'] : BASE_TABLES;
   const issues = [];
   const { rows: [role] } = await db.query(`SELECT current_user AS name,
     rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls, rolinherit, rolcanlogin
@@ -37,6 +38,10 @@ export async function auditDatabase(db) {
     quoted_message_id, sent_at, received_at, edited_at, last_edit_event_id FROM linebot.messages WHERE false`);
   await db.query('SELECT message_id, group_id, unsent_at FROM linebot.message_state WHERE false');
   await db.query('SELECT webhook_event_id, received_at FROM linebot.webhook_events WHERE false');
+  if (assistantEnabled) await db.query(`SELECT event_id,source_message_id,group_id,operator_user_id,
+    source_digest,kind,keyword,notice_reason,range_start,range_end,created_at,expires_at,status,
+    encrypted_reply_token,attempt_count,started_at,finished_at,error_code,message_count,input_truncated,
+    input_tokens,output_tokens FROM linebot.assistant_jobs WHERE false`);
 
   // PUBLIC grants and column grants still count even with NOINHERIT.
   // Catalog metadata only; this does not query any other application's rows.

@@ -4,26 +4,39 @@ import { PgStore } from './store.js';
 import { auditDatabase } from './database-audit.js';
 import { createServer } from './server.js';
 import { log } from './logger.js';
+import { AssistantStore } from './assistant-store.js';
+import { AssistantWorker } from './assistant-worker.js';
+import { OpenAISummarizer, LineReplier } from './assistant-clients.js';
 
 let pool;
 let server;
+let assistantWorker;
 try {
   const config = loadConfig();
   let store;
   if (config.database) {
     pool = new pg.Pool(config.database);
     pool.on('error', () => log('database_connection_error'));
-    const audit = await auditDatabase(pool);
+    const audit = await auditDatabase(pool, { assistantEnabled: config.assistant.enabled });
     if (!audit.ok) {
       log('database_audit_failed', { issues: audit.issues });
       throw new Error('Database audit failed');
     }
-    store = new PgStore(pool);
+    store = new PgStore(pool, { assistantEnabled: config.assistant.enabled });
     log('database_audit_passed');
+    if (config.assistant.enabled) assistantWorker = new AssistantWorker({ config,
+      store: new AssistantStore(pool, config), summarizer: new OpenAISummarizer(config.assistant),
+      replier: new LineReplier(config.assistant.lineAccessToken), log });
   }
-  server = createServer({ config, store, log });
-  server.on('error', () => { log('server_failed'); process.exitCode = 1; pool?.end(); });
-  server.listen(config.port, '0.0.0.0', () => log('server_started', { mode: config.mode }));
+  server = createServer({ config, store, assistantWorker, log });
+  server.on('error', () => {
+    log('server_failed'); process.exitCode = 1;
+    (async () => { await assistantWorker?.stop(); await pool?.end(); })().catch(() => {});
+  });
+  server.listen(config.port, '0.0.0.0', () => {
+    assistantWorker?.start();
+    log('server_started', { mode: config.mode, assistant_enabled: config.assistant.enabled });
+  });
   let stopping = false;
   const stop = () => {
     if (stopping) return;
@@ -31,8 +44,9 @@ try {
     log('server_stopping');
     const deadline = setTimeout(() => process.exit(1), 8000);
     deadline.unref();
+    const workerStopped = assistantWorker?.stop();
     server.close(async () => {
-      try { await pool?.end(); } finally { clearTimeout(deadline); }
+      try { await workerStopped; await pool?.end(); } finally { clearTimeout(deadline); }
     });
     server.closeIdleConnections();
   };
