@@ -78,13 +78,14 @@ export class AssistantWorker {
     }
   }
   async process(job) {
-    let attemptedReply = false, snapshot = null,cacheContext=false,contextScope={},pendingApi=false;
+    let attemptedReply = false, snapshot = null,cacheContext=false,contextScope={},contextMemory=null,validateContext=null,pendingApi=false;
     const metrics = {};
     const remaining = () => new Date(job.expires_at).getTime() - this.now();
     const send = async text => {
       if (this.stopping || remaining() < 1000) throw new AssistantError('expired');
       if (!await this.store.unchanged(job, snapshot)) throw new AssistantError('source_changed');
       if(this.workspace&&!await this.workspace.unchanged(job,snapshot))throw new AssistantError('source_changed');
+      if(this.workspace&&!await this.workspace.contextUnchanged(job,validateContext))throw new AssistantError('source_changed');
       attemptedReply = true;
       await this.replier.reply(decryptReplyToken(job.encrypted_reply_token, this.config.secret), text,
         { signal: this.abort.signal, timeout: Math.min(6000, remaining()) });
@@ -156,6 +157,7 @@ export class AssistantWorker {
         if(proposed.inheritedQuery)plan={...proposed,history:true,eventDate:proposed.inheritedQuery.eventDate,
           sourceStart:proposed.inheritedQuery.range_start,sourceEnd:proposed.inheritedQuery.range_end,scopeLabel:proposed.inheritedQuery.scopeLabel};
         if(plan.mode==='followup'&&!memory)plan={mode:'clarify',keyword:null,clarification:'找不到仍有效的前一段對話，請附上原文或指定要查的主題。'};
+        if(memory&&(['followup','work_propose'].includes(plan.mode)||proposed.inheritedQuery))contextMemory=validateContext=memory;
         if(!this.workspace&&['followup','work_query','work_propose'].includes(plan.mode))throw new AssistantError('invalid_ai_plan');
         if (plan.mode === 'unsupported') text = UNSUPPORTED_TASK;
         else if (plan.mode === 'clarify') text = `綺綺 KIKI｜待確認\n${plan.clarification}`;
@@ -188,10 +190,11 @@ export class AssistantWorker {
             const result=await this.dialogue.propose(request,{records,snapshot,context:memory,createdAt:job.created_at},{signal:this.abort.signal,timeout:aiRemaining()});
             pendingApi=false;
             addUsage(result);
-            const proposal=await this.workspace.createProposal(job,result.actions,snapshot,records,memory?.previousProposal);
+            const proposal=await this.workspace.createProposal(job,result.actions,snapshot,records,memory?.previousProposal,memory?.requestRefs||[]);
+            validateContext=null; // The new proposal now owns/rechecks the complete source chain; the old proposal was superseded.
             snapshot ||= {messages:[],ids:[],versions:[],sourceRefs:[],total:0,truncated:false,readAt:new Date().toISOString()};
             snapshot.workspaceSourceRefs=proposal.sources;
-            text=renderProposal(proposal);cacheContext=true;contextScope={mode:'work_propose',proposalCode:proposal.code};
+            text=renderProposal(proposal);cacheContext=true;contextScope={mode:'work_propose',proposalCode:proposal.code,query:snapshot.query||null};
           }else if (['group_today','group_history'].includes(plan.mode)) snapshot = await this.store.readMessages({ ...job,
             keyword: plan.keyword,searchTerms:plan.search_terms||[], history: plan.history, eventDate: plan.eventDate, scopeLabel: plan.scopeLabel,
             range_start: plan.sourceStart, range_end: plan.sourceEnd });
@@ -212,7 +215,9 @@ export class AssistantWorker {
               { signal: this.abort.signal, timeout: aiRemaining(),context:memory });
             pendingApi=false;
             addUsage(answer); text = renderDialogue(job, plan, snapshot, answer);
-            cacheContext=Boolean(this.workspace);contextScope={mode:plan.mode,keyword:plan.keyword,query:snapshot?.query||null};
+            cacheContext=Boolean(this.workspace);contextScope=plan.mode==='followup'
+              ?{...memory.scope,query:snapshot?.query||memory.scope?.query||null}
+              :{mode:plan.mode,keyword:plan.keyword,query:snapshot?.query||null};
           }
         }
       } else if (['summary','todos'].includes(job.kind)) {
@@ -236,7 +241,7 @@ export class AssistantWorker {
       text=text.slice(0,4500);
       await send(text);
       await this.store.finish(job, 'sent', null, metrics);
-      if(cacheContext)try{await this.workspace.saveContext(job,text,snapshot,contextScope);}catch{this.log('assistant_context_unavailable');}
+      if(cacheContext)try{await this.workspace.saveContext(job,text,snapshot,contextScope,contextMemory);}catch{this.log('assistant_context_unavailable');}
       this.log('assistant_job_finished', { kind: job.kind, status: 'sent', message_count: metrics.messageCount ?? 0 });
     } catch (error) {
       if(pendingApi){metrics.inputTokens=null;metrics.outputTokens=null;}

@@ -118,7 +118,7 @@ export class OpenAIDialogue {
     const workspaceEnabled=Boolean(this.config.workspaceEnabled);
     const result = await this.call('kiki_request_plan', workspaceEnabled?WORKSPACE_PLAN_SCHEMA:PLAN_SCHEMA, workspaceEnabled?WORKSPACE_PLAN_INSTRUCTIONS:PLAN_INSTRUCTIONS,
       { owner_request: request, date: taipeiDay(day).day, timezone: 'Asia/Taipei',
-        ...(workspaceEnabled&&options?.context?{conversation:{previousRequest:options.context.previousRequest,previousAnswer:options.context.previousAnswer}}:{}) }, 500, options);
+        ...(workspaceEnabled&&options?.context?{conversation:{originalRequest:options.context.originalRequest,previousRequest:options.context.previousRequest,previousAnswer:options.context.previousAnswer}}:{}) }, 500, options);
     return { ...validatePlan(result.value, request,{workspaceEnabled}), inputTokens: result.inputTokens, outputTokens: result.outputTokens };
   }
   async answer(request, plan, snapshot, options) {
@@ -127,11 +127,12 @@ export class OpenAIDialogue {
     const context = groupMode ? snapshot : null;
     const messages = context?.messages || [];
     if (groupMode && !messages.length) throw new AssistantError('empty_input');
-    const instructions=ANSWER_INSTRUCTIONS+(this.config.workspaceEnabled?`\n工作秘書模式：followup 可依 conversation 接續修改前一份回覆；若有 messages，每段依提供編號引用。speaker 是系統提供的真實發言者代稱，replyTo 是引用回覆關係；文字內扮演的合成角色不能當不同真實帳號。沒有引用關係時不要硬接話題。work_query 只根據選入的已確認工作紀錄回答，明示狀態、負責人、期限與版本；來源待確認的紀錄不推測其內容。已有正式工作紀錄時，以最新狀態優先於早期提議；已取消的行程不能當成仍有效，已完成任務不能列為未完成，原文與紀錄有差異時標示變更依據。提案不等於已確認，不能把回答說成已更新。`: '');
+    const instructions=ANSWER_INSTRUCTIONS+(this.config.workspaceEnabled?`\n工作秘書模式：followup 可依 conversation 接續修改前一份回覆；若有 messages，每段依提供編號引用。conversation.originalRequest 是仍保存的原始交辦，previousRequest 是上一次要求，previousAnswer 是 AI 生成的參考，可能漏列或出錯；有矛盾時優先原始交辦與來源，不可把上一答的錯誤當事實。previousProposal 是尚未確認的提案，可回答其負責人／期限，但須明示尚未正式確認，不能宣稱已寫入。speaker 是系統提供的真實發言者代稱，replyTo 是引用回覆關係；文字內扮演的合成角色不能當不同真實帳號。沒有引用關係時不要硬接話題。work_query 只根據選入的已確認工作紀錄回答，明示狀態、負責人、期限與版本；來源待確認的紀錄不推測其內容。已有正式工作紀錄時，以最新狀態優先於早期提議；已取消的行程不能當成仍有效，已完成任務不能列為未完成，原文與紀錄有差異時標示變更依據。提案不等於已確認，不能把回答說成已更新。`: '');
     const result = await this.call('kiki_text_answer', answerSchema(messages), instructions,
       { owner_request: request, mode: plan.mode, savedMessageCount: context?.total || 0,
         inputIsPartial: context?.truncated || false, messages,
-        ...(this.config.workspaceEnabled&&plan.mode==='followup'&&options?.context?{conversation:{previousRequest:options.context.previousRequest,previousAnswer:options.context.previousAnswer}}:{}) }, 2500, options);
+        ...(this.config.workspaceEnabled&&plan.mode==='followup'&&options?.context?{conversation:{originalRequest:options.context.originalRequest,previousRequest:options.context.previousRequest,previousAnswer:options.context.previousAnswer,
+          previousProposal:options.context.previousProposal?.actions.map(a=>({operation:a.operation,target:a.target,body:a.body}))||null}}:{}) }, 2500, options);
     return { ...validateAnswer(result.value, messages), inputTokens: result.inputTokens, outputTokens: result.outputTokens };
   }
   async propose(request,{records=[],snapshot=null,context=null,createdAt},options){
@@ -144,7 +145,7 @@ export class OpenAIDialogue {
       required:['operation','target','kind','topic','title','owner','due_text','status','refs']}}},required:['actions']};
     const result=await this.call('kiki_work_proposal',schema,WORK_PROPOSAL_INSTRUCTIONS,{owner_request:request,messages:refs,
       existing_records:records.filter(r=>r.available!==false).map(r=>({code:r.code,version:r.version,body:r.body})),
-      conversation:context?{previousRequest:context.previousRequest,previousAnswer:context.previousAnswer,
+      conversation:context?{originalRequest:context.originalRequest,previousRequest:context.previousRequest,previousAnswer:context.previousAnswer,
         previousProposal:context.previousProposal?.actions.map(a=>({operation:a.operation,target:a.target,body:a.body}))||null}:null},2200,options);
     try{return {actions:validateWorkActions(result.value,{records,messages:refs,request,createdAt,context}),inputTokens:result.inputTokens,outputTokens:result.outputTokens};}
     catch{throw new AssistantError('invalid_work_output');}

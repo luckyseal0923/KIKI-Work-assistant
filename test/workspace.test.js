@@ -13,7 +13,7 @@ import {WorkStore} from '../src/work-store.js';
 import {AssistantWorker} from '../src/assistant-worker.js';
 import {OpenAIDialogue,validatePlan} from '../src/assistant-dialogue.js';
 import {auditDatabase} from '../src/database-audit.js';
-import {normalizeWorkDate,validateWorkActions,workspaceControl,fastFollowup,renderProposal,workQueryDate} from '../src/work-actions.js';
+import {normalizeWorkDate,validateWorkActions,workspaceControl,fastFollowup,isFollowup,renderProposal,workQueryDate} from '../src/work-actions.js';
 import {estimateModelCost,summarizeUsage} from '../src/assistant-cost.js';
 
 const owner='U'+'1'.repeat(32),other='U'+'2'.repeat(32),third='U'+'3'.repeat(32),secret='synthetic-workspace-secret';
@@ -81,6 +81,16 @@ test('proposal input shares one source budget between complete work records and 
   assert.equal(result.records[0],records[0]);assert.equal(result.snapshot.truncated,true);
   const refs=new Set(result.snapshot.messages.map(m=>m.ref));
   assert.ok(result.snapshot.messages.every(m=>!m.replyTo||refs.has(m.replyTo)));
+});
+
+test('subjectless owner and deadline questions use context and ambiguous work targets ask for clarification',()=>{
+  for(const request of ['是由誰負責','是誰負責的？','負責人是誰','期限呢','什麼時候到期？']){
+    assert.equal(isFollowup(request),true);
+    assert.equal(fastFollowup(request,{scope:{mode:'work_propose'},previousProposal:{actions:[{}]}}).mode,'followup');
+  }
+  assert.equal(isFollowup('什麼是 SMART 目標'),false);
+  assert.equal(fastFollowup('是由誰負責',null),null);
+  assert.equal(fastFollowup('是由誰負責',{scope:{mode:'work_query'},records:[{},{}]}).mode,'clarify');
 });
 
 test('workspace database, bounded conversation, quoted replies and confirmation state machine',async t=>{
@@ -264,6 +274,58 @@ test('workspace database, bounded conversation, quoted replies and confirmation 
     const confirm=await f.command('確認 '+first.proposal.code);assert.equal((await f.workspace.apply(confirm.job,first.proposal.code)).status,'discarded');await finish(f,confirm.job);
     const correct=await f.command('確認 '+next.code);assert.equal((await f.workspace.apply(correct.job,next.code)).status,'applied');await finish(f,correct.job);
     assert.equal((await f.workspace.readItems(correct.job)).items[0].body.due_text,'後天中午');
+  });
+
+  await t.test('repeated subjectless followups preserve original assignment and pending proposal without leaking identifiers',async()=>{
+    const f=fixture(),first=await create(f,'新增待辦：由測試角色甲負責整理教材，明天中午');
+    await f.workspace.saveContext(first.job,'待確認提案',null,{mode:'work_propose',proposalCode:first.proposal.code});
+    const calls=[],replies=[];
+    const dialogue=new OpenAIDialogue(f.config.assistant,{fetchImpl:async(url,options)=>{
+      const body=JSON.parse(options.body);calls.push(body);assert.equal(body.text.format.name,'kiki_text_answer');
+      const input=JSON.parse(body.input[0].content[0].text);
+      assert.match(input.conversation.originalRequest,/由測試角色甲負責/);
+      assert.equal(input.conversation.previousProposal[0].body.owner,'測試角色甲');
+      const value={title:'合成追問',blocks:[{text:'原交辦由測試角色甲負責、明天中午到期，提案尚未正式確認。',refs:[]}]};
+      return new Response(JSON.stringify({status:'completed',output:[{type:'message',role:'assistant',content:[{type:'output_text',text:JSON.stringify(value)}]}],usage:{input_tokens:20,output_tokens:10}}));
+    }});
+    const worker=new AssistantWorker({config:f.config,store:f.store,workspace:f.workspace,dialogue,replier:{reply:async(token,text)=>replies.push(text)}});
+    const q1=await f.command('是由誰負責');await worker.process(q1.job);
+    const q2=await f.command('期限呢');await worker.process(q2.job);assert.equal(calls.length,2);assert.equal(replies.length,2);
+    const memory=await f.workspace.readContext(q2.job);assert.equal(memory.previousRequest,'期限呢');assert.match(memory.originalRequest,/由測試角色甲負責/);
+    assert.equal(memory.previousProposal.code,first.proposal.code);assert.equal(memory.requestRefs.length,3);
+    assert.equal((await f.workspace.readItems(q2.job)).items.length,0);
+    for(const call of calls){const text=JSON.stringify(call);for(const value of [owner,f.config.allowedGroupId,first.raw.message.id,q1.raw.message.id])assert.equal(text.includes(value),false);}
+    const revise=await f.command('把剛才那件改成後天中午');
+    const actions=validateWorkActions({actions:[rawAction({due_text:'後天中午'})]}, {request:'把剛才那件改成後天中午',createdAt:revise.job.created_at,context:memory});
+    const revised=await f.workspace.createProposal(revise.job,actions,null,[],memory.previousProposal,memory.requestRefs);await finish(f,revise.job);
+    assert.ok(revised.sources.some(r=>r.id===q1.raw.message.id));
+    await f.recall(q1.raw);assert.equal(await f.workspace.readContext(q2.job),null);assert.equal(await f.workspace.contextUnchanged(q2.job,memory),false);
+    const confirmation=await f.command('確認 '+revised.code);assert.equal((await f.workspace.apply(confirmation.job,revised.code)).status,'source_changed');await finish(f,confirmation.job);
+  });
+
+  await t.test('recall during a followup model call prevents publishing the remembered source',async()=>{
+    const f=fixture(),first=await create(f);
+    await f.workspace.saveContext(first.job,'待確認提案',null,{mode:'work_propose',proposalCode:first.proposal.code});
+    let replies=0;
+    const dialogue=new OpenAIDialogue(f.config.assistant,{fetchImpl:async()=>{
+      await f.recall(first.raw);
+      const value={title:'合成追問',blocks:[{text:'這段來源在處理時已收回，不應發布。',refs:[]}]};
+      return new Response(JSON.stringify({status:'completed',output:[{type:'message',role:'assistant',content:[{type:'output_text',text:JSON.stringify(value)}]}],usage:{input_tokens:20,output_tokens:10}}));
+    }});
+    const worker=new AssistantWorker({config:f.config,store:f.store,workspace:f.workspace,dialogue,replier:{reply:async()=>replies++}});
+    const q=await f.command('是由誰負責');await worker.process(q.job);assert.equal(replies,0);
+    assert.equal((await db.query('SELECT status FROM linebot.assistant_jobs WHERE event_id=$1',[q.job.event_id])).rows[0].status,'canceled');
+  });
+
+  await t.test('conversation request pointers are capped at eight turns without deleting original messages',async()=>{
+    const f=fixture(),first=await create(f);let memory=null;
+    await f.workspace.saveContext(first.job,'合成起點',null,{mode:'draft'});
+    for(let i=0;i<8;i++){
+      const next=await f.command('再短一點');memory=await f.workspace.readContext(next.job);assert.ok(memory);
+      await f.workspace.saveContext(next.job,'合成精簡',null,{mode:'draft'},memory);await finish(f,next.job);
+    }
+    assert.equal(await f.workspace.readContext(first.job),null);
+    assert.equal((await db.query('SELECT count(*)::integer AS n FROM linebot.messages WHERE message_id=$1',[first.raw.message.id])).rows[0].n,1);
   });
 
   await t.test('a failed second model call is not retried or reported as complete metered usage',async()=>{

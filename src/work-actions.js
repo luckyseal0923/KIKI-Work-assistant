@@ -4,6 +4,7 @@ export const WORK_CODE=/^W[0-9A-F]{8}$/u;
 export const PROPOSAL_CODE=/^P[0-9A-F]{8}$/u;
 const STATE={active:'未完成／有效',in_progress:'進行中',done:'已完成',canceled:'已取消'};
 const KIND={task:'待辦',decision:'決議',event:'行程'};
+const CONTEXT_QUESTION=/^(?:請問)?(?:是由誰負責|由誰負責|是誰負責|誰負責|負責人是誰|負責人呢|誰來處理|什麼時候(?:到期|截止|完成)?|何時(?:到期|截止|完成)?|期限(?:是什麼時候|呢)?|地點(?:在哪裡|呢)|在哪裡|時間呢|後來呢|目前呢|進度如何|完成了嗎|確認了嗎|決定了嗎|有定案嗎|還缺什麼)(?:的)?[。！？!?]?$/u;
 
 export function workspaceControl(request) {
   const text=request.trim().replace(/[。！!？?]+$/u,'').trim();
@@ -18,11 +19,16 @@ export function workspaceControl(request) {
 }
 
 export function isFollowup(request) {
-  return /^(那|這份|這個|這件|這些|剛才|剛剛|上一|再|繼續|改短|簡短一點)|^(?:請|幫我|把|將)?(?:剛才|剛剛|上面|上述|這件)|(?:他|她|乙|甲|丙)呢[？?]?$/u.test(request.trim());
+  return CONTEXT_QUESTION.test(request.trim())||/^(那|這份|這個|這件|這些|剛才|剛剛|上一|再|繼續|改短|簡短一點)|^(?:請|幫我|把|將)?(?:剛才|剛剛|上面|上述|這件)|(?:他|她|乙|甲|丙)呢[？?]?$/u.test(request.trim());
 }
 export function fastFollowup(request,context){
   if(!context)return null;
   const value=request.trim();
+  if(CONTEXT_QUESTION.test(value)){
+    const targets=context.previousProposal?.actions||context.records||[];
+    if(['work_query','work_propose'].includes(context.scope?.mode)&&targets.length>1)return {mode:'clarify',keyword:null,search_terms:[],source_scope:'none',clarification:'前次包含多筆工作，請指定要追問的工作代碼或主題。',inputTokens:0,outputTokens:0};
+    return {mode:'followup',keyword:null,clarification:null,source_scope:'none',inputTokens:0,outputTokens:0};
+  }
   if(['work_query','work_propose'].includes(context.scope?.mode)&&/^(?:把|將)?這(?:件|項)/u.test(value)
     &&/完成|取消|改期|改成|改為|更新|負責|期限/u.test(value)&&!/[？?]|嗎|是否|有沒有|是不是/u.test(value)){
     const targets=context.previousProposal?.actions||context.records||[];
@@ -108,7 +114,7 @@ export function validateWorkActions(value,{records=[],messages=[],request,create
     if(assigned&&body.owner&&body.owner!==assigned)throw new Error('conflicting_work_owner');
     if(assigned&&body.owner===null)body.owner=assigned;
     const quoted=action.refs.map(r=>refs.get(r));
-    const availableText=[request,context?.previousRequest,...(context?.previousProposal?.actions||[]).flatMap(a=>[a.body.title,a.body.owner,a.body.due_text]),
+    const availableText=[request,context?.originalRequest,context?.previousRequest,...(context?.previousProposal?.actions||[]).flatMap(a=>[a.body.title,a.body.owner,a.body.due_text]),
       ...quoted.map(m=>m.text),...(previous?[previous.body.title,previous.body.owner,previous.body.due_text]:[])].filter(Boolean).join('\n');
     const selfAssigned=value=>/我(?:來|會|要|負責)|由我/u.test(value);
     const speakerOwner=quoted.some(m=>m.speaker===body.owner&&selfAssigned(m.text));

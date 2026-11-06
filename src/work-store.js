@@ -67,10 +67,13 @@ export class WorkStore {
   }
   async clearContext(job){this.assert(job);await this.pool.query(`UPDATE linebot.assistant_context SET payload='{}'::jsonb,expires_at=clock_timestamp()
     WHERE group_id=$1 AND operator_user_id=$2`,[job.group_id,job.operator_user_id]);}
-  async saveContext(job,answer,snapshot,scope={}){
+  async saveContext(job,answer,snapshot,scope={},previousContext=null){
     this.assert(job);if(typeof answer!=='string'||answer.length>4500)return;
+    const origin=previousContext?.origin||{id:job.source_message_id,digest:job.source_digest,offset:job.request_offset};
+    const requestRefs=mergeSources(previousContext?.requestRefs||[],[this.jobSource(job)]);
+    if(requestRefs.length>8){await this.clearContext(job);return;}
     const payload={request_id:job.source_message_id,request_digest:job.source_digest,request_offset:job.request_offset,
-      answer,scope,sourceRefs:snapshot?.sourceRefs||[],recordRefs:snapshot?.recordRefs||[],
+      answer,scope,origin,requestRefs,sourceRefs:snapshot?.sourceRefs||[],recordRefs:snapshot?.recordRefs||[],
       selection:{total:snapshot?.total||0,truncated:Boolean(snapshot?.truncated),totalIsLowerBound:Boolean(snapshot?.totalIsLowerBound)},
       messages:(snapshot?.messages||[]).map(m=>({ref:m.ref,length:m.text.length,id:snapshot.sourceRefs?.find(r=>r.ref===m.ref)?.id||null})),
       snapshotLabel:snapshot?.scopeLabel||null};
@@ -93,7 +96,10 @@ export class WorkStore {
       if(!proposal||!await this.sourceRows(this.pool,proposal.sources))return null;
       previousProposal=proposal;
     }
-    const rows=await this.sourceRows(this.pool,mergeSources([{id:p.request_id,digest:p.request_digest,at:null}],p.sourceRefs||[]));
+    const origin=p.origin||{id:p.request_id,digest:p.request_digest,offset:p.request_offset};
+    const requestRefs=mergeSources(p.requestRefs||[],[{id:p.request_id,digest:p.request_digest,at:null}],
+      [{id:origin.id,digest:origin.digest,at:null}]);
+    const rows=await this.sourceRows(this.pool,mergeSources(requestRefs,p.sourceRefs||[]));
     let valid=Boolean(rows);
     const records=[];
     for(const ref of p.recordRefs||[]){
@@ -103,6 +109,7 @@ export class WorkStore {
     if(!valid){await this.pool.query(`UPDATE linebot.assistant_context SET payload='{}'::jsonb WHERE group_id=$1 AND operator_user_id=$2 AND updated_at=$3`,[job.group_id,job.operator_user_id,row.updated_at]);return null;}
     const byId=new Map(rows.map(r=>[r.message_id,r]));
     const request=byId.get(p.request_id).message_text.slice(p.request_offset||0).trim().slice(0,2000);
+    const originalRequest=byId.get(origin.id).message_text.slice(origin.offset||0).trim().slice(0,2000);
     let snapshot=null;
     if(p.messages?.some(m=>m.id)){
       const selected=p.messages.filter(m=>byId.has(m.id));const refById=new Map(selected.map(m=>[m.id,m.ref]));
@@ -113,7 +120,17 @@ export class WorkStore {
     }
     if(records.length)snapshot=this.appendRecords(snapshot,records);
     if(snapshot){snapshot.total=Math.max(snapshot.total,p.selection?.total||0);snapshot.truncated ||= Boolean(p.selection?.truncated);snapshot.totalIsLowerBound ||= Boolean(p.selection?.totalIsLowerBound);}
-    return {previousRequest:request,previousAnswer:p.answer,scope:p.scope||{},snapshot,records,previousProposal};
+    return {originalRequest,origin,requestRefs,previousRequest:request,previousAnswer:p.answer,scope:p.scope||{},snapshot,records,previousProposal};
+  }
+  async contextUnchanged(job,context){
+    this.assert(job);if(!context)return true;
+    if(!await this.sourceRows(this.pool,context.requestRefs||[]))return false;
+    if(context.previousProposal){
+      const {rows}=await this.pool.query(`SELECT code FROM linebot.work_proposals WHERE code=$1 AND group_id=$2 AND operator_user_id=$3
+        AND status='pending' AND expires_at>clock_timestamp()`,[context.previousProposal.code,job.group_id,job.operator_user_id]);
+      if(!rows.length||!await this.sourceRows(this.pool,context.previousProposal.sources))return false;
+    }
+    return true;
   }
   async readItems(job,{keyword=null,status='open',itemCode=null,dueOn=null,eventDate=null,kind=null}={}){
     this.assert(job);
@@ -206,12 +223,12 @@ export class WorkStore {
     }
     return true;
   }
-  async createProposal(job,actions,snapshot,records=[],previousProposal=null){
+  async createProposal(job,actions,snapshot,records=[],previousProposal=null,contextSources=[]){
     this.assert(job);
     renderProposal({code:'P00000000',actions});
     const refs=new Set(actions.flatMap(a=>a.refs));
     const sources=mergeSources([this.jobSource(job)],(snapshot?.sourceRefs||[]).filter(r=>refs.has(r.ref)),
-      records.filter(r=>actions.some(a=>a.target===r.code)).flatMap(r=>r.sources),previousProposal?.sources||[]);
+      records.filter(r=>actions.some(a=>a.target===r.code)).flatMap(r=>r.sources),previousProposal?.sources||[],contextSources);
     if(!await this.sourceRows(this.pool,sources))throw new Error('work_source_changed');
     const proposal={code:code('P'),actions};
     await this.transaction(async db=>{
