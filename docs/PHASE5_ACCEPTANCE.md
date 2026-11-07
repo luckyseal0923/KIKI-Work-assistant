@@ -1,6 +1,6 @@
 # 第五階段驗證狀態
 
-2026-11-07：本機完成；未部署、006 未在正式庫執行、兩個新旗標未在正式環境開啟。不得將以下合成測試當成 LINE 端到端驗收。
+2026-11-07：已完成正式部署、006 COMMIT、應用帳號稽核、LINE 官方卡片格式驗證與新旗標啟用。尚待管理者完成 LINE 新群申請、確認及收錄實測，不得將本機合成測試或官方格式檢查當成 LINE 端到端驗收。
 
 `npm test` 明確只執行 test 目錄，避免舊封裝解壓副本被自動重跑。本次共 106 項通過、0 失敗，包含先前 87 項及 19 項新測試（含子測試）。JS 語法檢查、Git 空白檢查通過；測試使用 PGlite 與模擬 OpenAI／LINE，不使用正式金鑰或群組資料。
 
@@ -17,6 +17,18 @@
 - 次群過期快取清除，不刪原始訊息。
 - 真實 HTTP 請求在驗簽前不查群組設定；模型分類期間確認停用後，不再呼叫第二次模型或發布答案。跨群批次先取得共用額度鎖，再取得訊息狀態鎖，避免額度與訊息交叉等待。
 
-正式唯讀前置核對已完成：五表均不存在，執行者與 linebot schema 擁有者均為 supabase_admin；已 ROLLBACK 結束唯讀交易。現行日誌仍為第四階段啟動旗標，沒有開啟新功能。
+## 正式執行證據
 
-待正式驗證：新版本部署、006 COMMIT、應用帳號新旗標稽核、容器健康／就緒、LINE 官方 Flex schema、桌面／手機實際卡片、真實點擊與新群啟用、收錄／收回與兩群查詢隔離。大型真實歷史、正式併發占鎖與不同 LINE 用戶端尚未測試。
+- 套用前再次唯讀核對五表均不存在，執行者與 linebot schema 擁有者均為 supabase_admin；已 ROLLBACK 結束唯讀交易。
+- 已核准版本 40d77e66ccd887420257087d56d5d5f51d065968 更新至既有正式分支 codex/kiki-phase1。首次部署 v1uzva1tqdhiaxdsdq0fxb8x 成功，26 秒；UTC 02:53:46 啟動日誌確認 organizer／multi 皆 false，既有功能仍開啟。
+- 既有 supabase_admin 執行完整 006，畫面確認 COMMIT。管理員資料庫終端已關閉。
+- 受限 linebot_app 新旗標稽核 ok=true，issues、externalTables、externalDefiners、memberships、writableSchemas 皆空陣列。
+- LINE validate/reply 僅驗證合成 Flex 格式，HTTP 200 accepted=true；沒有向群組發送測試訊息。涵蓋確認、取消、完成、歷程、清單及主題按鈕。
+- Production 的 organizer／multi 設為 true，Literal、Runtime 開啟、Buildtime 關閉；Preview 未變更。
+- 手動部署 sxkzgrhxswkeibqf0suhgvrt，UTC 02:58:54.689 稽核通過；02:58:54.704 啟動日誌確認兩新旗標 true。臺北時間為 2026-11-07 10:58。
+- 啟用後以實際設定再查：受限帳號稽核通過，HTTPS /healthz 與 /readyz 均 200、ok=true；群組設定已註冊 1、啟用 1，原管理群及原管理者相符。尚未自動啟用任何新群。
+- 實際限制維持 daily=20、cooldown=30、maxGroups=3，來源 20 則／12,000 字元，模型 gpt-6-luna。
+
+一次檢查指令的合成文字換行未轉義而造成語法錯誤，發生於執行任何資料庫／LINE 檢查前；修正後上述稽核與官方格式檢查通過，沒有為此變更應用程式或資料。
+
+待正式驗證：桌面／手機實際卡片、真實點擊與新群啟用、收錄／收回與兩群查詢隔離、主題及工作卡片流程。大型真實歷史、正式併發占鎖與不同 LINE 用戶端尚未測試。

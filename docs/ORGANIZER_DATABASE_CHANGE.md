@@ -1,6 +1,6 @@
 # 006 精確資料庫影響與停用
 
-2026-11-07：尚未在正式資料庫執行。唯讀核對確認五表皆不存在，執行者與 linebot schema 擁有者均為 supabase_admin，已 ROLLBACK 結束唯讀交易。完整 SQL：[006_cards_topics.sql](../migrations/006_cards_topics.sql)。現有正式版基準為 efd91ec；新旗標皆預設關閉。
+2026-11-07：已依使用者對本版精確部署、SQL、COMMIT、ACL、啟用與合成實測的明確核准執行。套用前再次唯讀核對五表皆不存在，執行者與 linebot schema 擁有者均為 supabase_admin。006 畫面已確認 COMMIT，應用帳號新旗標稽核通過；沒有修改其他共享物件 ACL。完整 SQL：[006_cards_topics.sql](../migrations/006_cards_topics.sql)。正式執行版本為 40d77e6，原始碼新旗標預設仍關閉，正式環境已明確設為 true。
 
 | 物件 | 變更 | linebot_app 權限 |
 | --- | --- | --- |
